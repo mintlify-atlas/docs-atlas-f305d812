@@ -11,7 +11,7 @@ The UK Travel Recommendation frontend is a cross-platform mobile application bui
 The following core libraries underpin the application:
 
 | Library | Version | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | **expo** | `^54.0.0` | Build tooling, OTA updates, native module access |
 | **react-native** | `0.81.5` | Cross-platform UI primitives |
 | **react** | `19.1.0` | Component model and concurrent rendering |
@@ -23,15 +23,16 @@ The following core libraries underpin the application:
 | **expo-secure-store** | `~15.0.8` | Encrypted JWT storage on device |
 | **@react-native-async-storage/async-storage** | `2.2.0` | Persistent geo filter preference |
 | **react-native-maps** | `1.20.1` | Interactive map view for liked attractions |
-| **rn-swiper-list** | `^3.0.0` *(devDependency)* | Tinder-style swipeable card deck |
 | **@gorhom/bottom-sheet** | `^5` | Attraction detail sheet on discovery cards |
 | **lucide-react-native** | `^0.563.0` | Icon set |
+| **react-native-reanimated** | `4.1.1` | Animation libraries, used for custom swiping animation |
+| **react-native-gesture-handler** | `2.28.0` | Handling mobile gesture: swipe, scroll, ..etc |
 
 ## Navigation Structure
 
 The app uses a single root `NativeStackNavigator` whose screens branch into three logical groups. Unauthenticated users land in the **Auth stack**, complete the **Preference onboarding stack** on first sign-up, and then enter the **Main bottom-tab stack** for everyday use.
 
-```
+```text
 Root Stack
 ├── Landing          (WelcomeScreen)
 ├── Register         (RegisterScreen)
@@ -42,8 +43,12 @@ Root Stack
 │   └── PreferenceImport (bulk import visited)
 └── Main (Bottom Tabs)
     ├── Discovery    (swipe deck)
-    ├── Liked        (liked attractions grid)
-    └── Profile / Settings
+    ├── LikedStack   (liked attractions tab)
+	│   ├── LikedMain (maps, group by geo area, list all)
+	│   ├── LikedAreaScreen (attractions grid by a specific area)
+    └── Profile / Settings (settings tab)
+	│   ├── UpdateGeoFilter (same as PreferenceArea)
+	│   ├── AttractionImport (same as PreferenceImport)
 ```
 
 The full TypeScript parameter list for every route is defined in `types/navigation.tsx`:
@@ -70,7 +75,7 @@ export type RootStackParamList = {
 ```
 
 <Note>
-`LikedAreaScreen` is the only parameterised route. It receives an array of `Attraction` objects and the name of the selected area so the map view can be pre-filtered without an additional network request.
+  `LikedAreaScreen` is the only parameterised route. It receives an array of `Attraction` objects and the name of the selected area so the map view can be pre-filtered without an additional network request.
 </Note>
 
 ## State Management
@@ -81,12 +86,15 @@ State in the app is deliberately split by concern:
   <Card title="TanStack Query" icon="database">
     Manages all server-originated state: the paginated recommendations feed, the liked-attractions history, and search results. Stale-while-revalidate semantics keep the UI snappy while background refreshes run automatically.
   </Card>
+
   <Card title="AuthContext" icon="lock">
     Wraps the entire app and exposes `isAuthenticated`, `isLoading`, `login()`, and `logout()`. Tokens are persisted in `expo-secure-store` and rehydrated on every cold start.
   </Card>
+
   <Card title="AsyncStorage" icon="hard-drive">
     Stores the user's geo filter string (e.g. `?area=London`). This lightweight preference does not need the encryption that SecureStore provides but does need to survive app restarts.
   </Card>
+
   <Card title="Local Component State" icon="layers">
     Ephemeral UI state — sheet open/close, form field values, swipe deck index — lives in plain React `useState` and never escapes the component tree.
   </Card>
@@ -127,19 +135,24 @@ The palette is derived from the Solarized colour scheme, giving the app a warm, 
   <Card title="Expo" icon="rocket">
     Provides the managed build workflow, OTA update infrastructure, and access to native APIs (SecureStore, Camera, Location) without requiring a custom native build for development.
   </Card>
+
   <Card title="TanStack Query v5" icon="arrows-rotate">
     Infinite query support powers the paginated recommendations feed. The `useRecommendations` hook triggers the next page fetch automatically when five or fewer cards remain in the deck.
   </Card>
+
   <Card title="NativeWind" icon="paintbrush">
     Brings the full Tailwind CSS v3 utility vocabulary to React Native. Combined with the custom colour tokens, it eliminates bespoke `StyleSheet` boilerplate across the entire codebase.
   </Card>
+
   <Card title="React Navigation" icon="map">
     Handles both the root native stack (for full-screen transitions) and the bottom-tab bar inside the `Main` screen. Deep linking and type-safe route params are configured via `RootStackParamList`.
   </Card>
+
   <Card title="react-native-maps" icon="location-dot">
     Renders the `LikedAreaScreen` map, plotting liked attractions as map markers. On iOS it uses Apple Maps; on Android it defaults to Google Maps.
   </Card>
-  <Card title="rn-swiper-list" icon="hand-pointer">
+
+  <Card title="react-native-animated & react-native-gesture-handler" icon="hand-pointer">
     Powers the `DiscoveryScreen` card deck. Left swipes trigger `dislikeAttraction`, right swipes trigger `likeAttraction`, and the deck automatically re-fills from the TanStack Query infinite cache.
   </Card>
 </CardGroup>
@@ -178,5 +191,5 @@ Follow these steps to start the development server locally:
 </Steps>
 
 <Tip>
-If you are running the Django backend inside Docker, make sure the container's port is bound to `0.0.0.0` rather than `127.0.0.1` so that devices on your local network can reach it.
+  If you are running the Django backend inside Docker, make sure the container's port is bound to `0.0.0.0` rather than `127.0.0.1` so that devices on your local network can reach it.
 </Tip>
