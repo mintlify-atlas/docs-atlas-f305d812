@@ -1,5 +1,5 @@
 ---
-title: "POST /api/recommendations/dislike/{id} — Dislike an Attraction"
+title: "POST /api/recommendations/dislike/{id} — Dislike"
 sidebarTitle: "Dislike Attraction"
 description: "Record a dislike for an attraction and push the user's preference profile away using vector rejection. Returns 400 if the attraction was already disliked."
 ---
@@ -46,6 +46,10 @@ When a dislike is successfully recorded, the user's preference profile is update
 **ReLU floor** on the MHE component ensures that categorical preference scores never go negative — a dislike can reduce interest in a category to zero but cannot invert it.
 
 The resulting profile vector is normalised after the update.
+
+<Tip>
+  A `profile_delta` value — the cosine distance between the profile vector **before** and **after** the dislike — is computed and stored on the interaction record. Additionally, after every **10th interaction** (likes and dislikes combined), an **Intra-List Diversity (ILD)** score is computed over the last 10 interactions and stored as a `UserRecommendationBatch` record for analytics.
+</Tip>
 
 ## Response
 

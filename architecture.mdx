@@ -32,7 +32,7 @@ The lifetime of a user session follows a clear cycle from registration through c
 
 <Steps>
   <Step title="Registration and login">
-    The user creates an account via `POST /api/user/register/`. The backend creates a `User` record and an associated `UserProfile` with a zero-initialised `finalVector`. On login (`POST /api/user/login/`), the server returns a short-lived **access token** (15 min) and a long-lived **refresh token** (30 days). Both are persisted in Expo Secure Store on the device.
+    The user creates an account via `POST /api/user/register/`. The backend creates a `User` record and an associated `UserProfile` with a zero-initialised `finalVector`. On login (`POST /api/user/token/`), the server returns a short-lived **access token** (15 min) and a long-lived **refresh token** (30 days). Both are persisted in Expo Secure Store on the device.
   </Step>
   <Step title="Initial preference setup">
     Before the swipe feed is shown, the onboarding flow asks the user to select preferred attraction categories. These selections are encoded using the same Multi-Hot Encoding scheme used for attractions and used to seed the user's `finalVector`, giving the recommendation engine a meaningful starting point before any swipes have occurred.
@@ -41,7 +41,7 @@ The lifetime of a user session follows a clear cycle from registration through c
     The frontend calls `GET /api/recommendations/` (optionally with `?county=`, `?region=`, or `?country=` geo-filter parameters). Django retrieves the caller's `UserProfile.finalVector`, runs a `pgvector` cosine-distance kNN query against the attractions table, and then applies MMR re-ranking in Python before returning a ranked list of attraction objects.
   </Step>
   <Step title="Swipe interaction">
-    Each swipe gesture triggers a `POST /api/recommendations/swipe/` request carrying the attraction ID and the swipe direction (`like` or `dislike`). The backend fetches the swiped attraction's `finalVector` and adds it to (like) or subtracts it from (dislike) the user's profile vector, then re-normalises and persists the updated profile.
+    Each swipe gesture triggers either a `POST /api/recommendations/like/<id>` or `POST /api/recommendations/dislike/<id>` request carrying the attraction ID. The backend fetches the swiped attraction's `finalVector` and updates the user's profile vector — blending it toward (like) or orthogonally rejecting it from (dislike) the attraction's embedding — then re-normalises and persists the updated profile.
   </Step>
   <Step title="Profile update and next batch">
     With the profile updated, TanStack Query invalidates the recommendations cache, and the next fetch returns a freshly computed batch that reflects the user's latest expressed preferences. This cycle repeats for every swipe, creating a continuously tightening feedback loop.
@@ -68,6 +68,12 @@ The assembly is performed by the `normalize()` function, called once during data
 WEIGHT_MHE = 1.5
 WEIGHT_TYPE = 1.0
 WEIGHT_SUMMARY = 0.5
+
+def safeL2Normalize(vec):
+    arr = np.array(vec, dtype=float)
+    l2 = np.linalg.norm(arr)
+    if l2 > 0: arr /= l2
+    return arr
 
 def normalize(labelMHE, labelEmbed, summaryEmbed):
     return np.concatenate([
@@ -104,7 +110,7 @@ def normalize(labelMHE, labelEmbed, summaryEmbed):
             − (1 − λ) · max_sim(attraction, already_selected)
   ```
 
-  At `lambda_mult = 0.5` the algorithm is equally willing to sacrifice a small amount of relevance to gain meaningful diversity. The final ranked list (typically the top 10–20 items from the MMR pass) is what the frontend receives.
+  At `lambda_mult = 0.5` the algorithm is equally willing to sacrifice a small amount of relevance to gain meaningful diversity. The final ranked list (the top 10 items from the MMR pass) is what the frontend receives.
 </Accordion>
 
 <Accordion title="Step 3 — Serialisation and response">
@@ -118,7 +124,7 @@ UK Travel Recommendation uses **JSON Web Tokens (JWT)** via `djangorestframework
 <Tabs>
   <Tab title="Token issuance">
     ```
-    POST /api/user/login/
+    POST /api/user/token/
     → 200 OK
     {
       "access":  "<JWT, expires in 15 minutes>",
@@ -140,7 +146,7 @@ UK Travel Recommendation uses **JSON Web Tokens (JWT)** via `djangorestframework
   <Tab title="Automatic token refresh">
     When an API call returns `401 Unauthorized`, a response interceptor in `axios` automatically:
 
-    1. Calls `POST /api/user/token/refresh/` with the stored refresh token.
+    1. Calls `POST /api/user/token/refresh` with the stored refresh token.
     2. Writes the new access token back to Expo Secure Store.
     3. Retries the original failed request with the new token.
 
@@ -154,25 +160,30 @@ UK Travel Recommendation uses **JSON Web Tokens (JWT)** via `djangorestframework
 
 ## Infrastructure
 
-The entire backend stack is defined in a single `docker-compose.yml` at the repository root:
+The entire backend stack is defined in a single `docker-compose.yaml` at the repository root:
 
 ```yaml
 services:
-  db:
-    image: pgvector/pgvector:pg15-bookworm
-    ports:
-      - "5432:5432"
-    env_file:
-      - ./backend/.env
-
   backend:
     build: ./backend
+    container_name: backend_csproj
+    command: python manage.py runserver 0.0.0.0:8000
     ports:
       - "8000:8000"
     depends_on:
       - db
     env_file:
       - ./backend/.env
+
+  db:
+    image: pgvector/pgvector:pg15-bookworm
+    container_name: postgres_vector
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 ```
 
-Both services share the same `./backend/.env` file for database credentials, ensuring the Django `DATABASES` setting and the PostgreSQL initialisation scripts use identical values. The `pgvector/pgvector:pg15-bookworm` image ships with the `pgvector` extension pre-compiled, so no additional installation step is needed — the extension is enabled by the Django migration that creates the vector columns.
+The `backend` service reads its configuration from `./backend/.env` (Django secret key and database credentials). The `db` service receives its PostgreSQL credentials via inline `environment` variables sourced from the same `.env` file at the shell level. The `pgvector/pgvector:pg15-bookworm` image ships with the `pgvector` extension pre-compiled, so no additional installation step is needed — the extension is enabled by the Django migration that creates the vector columns.

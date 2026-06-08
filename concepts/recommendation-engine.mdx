@@ -1,7 +1,7 @@
 ---
-title: "How the Recommendation Engine Works"
+title: "How the Recommendation Engine Ranks UK Travel Attractions"
 sidebarTitle: "Recommendation Engine"
-description: "Learn how UK Travel Recommendation uses cosine vector similarity, kNN search, and MMR re-ranking to surface personalised and diverse attraction recommendations."
+description: "Learn how UK Travel Recommendation uses cosine similarity, kNN search, and MMR re-ranking to surface personalised and diverse attraction recommendations."
 ---
 
 The recommendation engine transforms your accumulated preferences into a ranked list of UK attractions through a three-stage pipeline: your live user profile vector is normalised and used to query a pgvector-backed PostgreSQL database via approximate nearest-neighbour cosine search, the resulting candidate pool is then passed through a Maximal Marginal Relevance (MMR) re-ranker that balances personal relevance against variety, and only then is the final list of ten attractions returned. Every swipe you make updates your profile in real time, so each new recommendations fetch reflects your latest expressed taste.

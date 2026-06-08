@@ -1,7 +1,7 @@
 ---
-title: "POST /api/user/token/ — Obtain JWT Access Token"
+title: "POST /api/user/token/ — Obtain a JWT Access Token Pair"
 sidebarTitle: "Login"
-description: "Exchange a username and password for a JWT access token (15 min) and refresh token (30 days). Use the access token as a Bearer token on all protected endpoints."
+description: "Exchange username and password for a JWT access token (15 min) and refresh token (30 days). Use the access token as a Bearer token on protected endpoints."
 ---
 
 The login endpoint is powered by `djangorestframework-simplejwt`'s built-in `TokenObtainPairView`. Providing a valid username and password returns two signed JSON Web Tokens: a short-lived **access token** that authorises individual API requests, and a long-lived **refresh token** that lets the client silently obtain new access tokens without asking the user to re-enter their credentials. The access token expires after **15 minutes** and the refresh token after **30 days**. All protected endpoints in this API expect the access token to be passed in the `Authorization` header as a Bearer token. No prior authentication is needed to call this endpoint itself.

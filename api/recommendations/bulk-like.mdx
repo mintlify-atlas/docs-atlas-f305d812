@@ -1,10 +1,10 @@
 ---
-title: "POST /api/recommendations/like/bulk/ — Bulk Import Liked Attractions"
+title: "POST /api/recommendations/like/bulk/ — Bulk Like"
 sidebarTitle: "Bulk Like"
-description: "Import multiple previously visited attractions in a single request to bootstrap the user's preference profile during onboarding."
+description: "Import multiple liked attractions at once to seed the user's preference profile during onboarding. Returns 400 if all IDs were already added."
 ---
 
-The Bulk Like endpoint is designed for the **onboarding flow**, where a new user indicates attractions they have already visited before they start swiping on the Discovery screen. Rather than calling the single Like endpoint repeatedly, the client sends a single list of attraction IDs and the server processes them all atomically — summing the MHE category vectors and averaging the embedding vectors across every new attraction in the batch, then applying one combined update to the user's preference profile. This batched averaging prevents the early interactions of an active onboarding user from over-fitting the profile toward a single attraction type. A special initialisation path handles the case where the user's profile vectors are still empty (all zeros), ensuring the first bulk import seeds a well-formed profile even when no prior interactions exist.
+The Bulk Like endpoint is designed for the **onboarding flow**, where a new user indicates attractions they have already visited before they start swiping on the Discovery screen. Rather than calling the single Like endpoint repeatedly, the client sends a single list of attraction IDs and the server processes them all atomically — summing the MHE category vectors and averaging the embedding vectors across every new attraction in the batch, then applying one combined update to the user's preference profile. This batched averaging prevents the early interactions of an active onboarding user from over-fitting the profile toward a single attraction type.
 
 ## Endpoint
 
@@ -40,14 +40,15 @@ Content-Type: application/json
 
 The bulk like update differs from the single like update in how it aggregates multiple attractions:
 
-1. **Filter new attractions** — IDs already present in the user's interaction history are excluded from the update.
-2. **Sum MHE vectors** — The `labelMHE` vectors of all new attractions are summed and added to the profile's `labelMHE` component.
-3. **Average embedding vectors** — The `labelEmbed` and `summaryEmbed` vectors are averaged across all new attractions and used as the target for the profile move step.
-4. **Initialisation path** — When `isInitialising=True` (the user's profile vectors are still zero-filled), the averaged attraction vectors are written directly as the starting profile instead of using incremental learning rates. This seeds a meaningful initial state for new users.
-5. **Delta computation** — The `profile_delta` (cosine distance before vs. after) is computed using the last attraction in the batch and stored on that interaction record.
+1. **Collect new attractions** — For each ID, a `UserInteraction` record is created with `liked=True`. Only newly created interactions contribute to the profile update; IDs the user already interacted with are skipped.
+2. **Sum MHE vectors** — The `labelMHE` vectors of all new attractions are summed together.
+3. **Average embedding vectors** — The `labelEmbed` and `summaryEmbed` vectors are averaged across all new attractions.
+4. **Initialisation path** — When `isInitialising=True` (the user has no prior interactions at all before this bulk call), the MHE update uses a factor of `(1 - MHE_ALPHA)` = `0.8` instead of the standard `MHE_ALPHA = 0.2`: `profile.labelMHE += avgMHE * 0.8`. Within this path, if the profile embeddings are still zero-filled (`emptyEmbedding=True`), the averaged embedding vectors are written directly as the initial profile embeddings. Otherwise, a higher blending alpha of `0.6` is used: `profile.labelEmbed = (0.6 * avgLabelEmbed) + (0.4 * profile.labelEmbed)`.
+5. **Standard path** — When prior interactions exist, the profile is updated via the same `_update_profile` method used by the single Like endpoint (MHE_ALPHA = 0.2, LABEL_EMBED_ALPHA = 0.15, SUMMARY_EMBED_ALPHA = 0.1).
+6. **Delta computation** — The `profile_delta` (cosine distance before vs. after) is computed and stored on the **last** attraction's interaction record only.
 
 <Note>
-  This endpoint is designed specifically for **onboarding**. For individual swipe interactions during normal app usage, use the single [Like](/api/recommendations/like) and [Dislike](/api/recommendations/dislike) endpoints, which apply per-item learning rates and store individual deltas.
+  This endpoint does **not** log an ILD score. For individual swipe interactions during normal app usage, use the single [Like](/api/recommendations/like) and [Dislike](/api/recommendations/dislike) endpoints, which apply per-item learning rates, store individual deltas, and log ILD every 10 interactions.
 </Note>
 
 ## Response

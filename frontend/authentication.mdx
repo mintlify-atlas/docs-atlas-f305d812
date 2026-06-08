@@ -1,5 +1,5 @@
 ---
-title: "Authentication Flow in the Mobile App"
+title: "JWT Authentication Flow for UK Travel Recommendation"
 sidebarTitle: "Authentication"
 description: "Understand how the UK Travel Recommendation app handles JWT login, secure token storage, automatic token refresh, and session restoration on app open."
 ---
@@ -13,7 +13,7 @@ Authentication in the UK Travel Recommendation app is built on JSON Web Tokens. 
     Short-lived token sent as `Authorization: Bearer <token>` on every authenticated request. Stored in `expo-secure-store` under the key `accessToken`.
   </Card>
   <Card title="JWT Refresh Token" icon="arrows-rotate">
-    Longer-lived token used exclusively to mint new access tokens. Stored in `expo-secure-store` under the key `refreshToken`. Never sent to any endpoint other than `/api/user/token/refresh`.
+    Longer-lived token used exclusively to mint new access tokens. Stored in `expo-secure-store` under the key `refreshToken`. Never sent to any endpoint other than `user/token/refresh`.
   </Card>
   <Card title="Automatic Refresh" icon="shield-check">
     The Axios response interceptor intercepts every `401` response, attempts a silent token refresh, and retries the original request — fully transparent to calling code.
@@ -42,7 +42,7 @@ interface AuthContextType {
 | `isAuthenticated` | `boolean` | `true` when a valid access token is present in SecureStore. |
 | `isLoading` | `boolean` | `true` while the initial SecureStore check is in progress on app open. Prevents a flash of the login screen for returning users. |
 | `login` | `(username, password) => Promise<{ success, message? }>` | Submits credentials to the token endpoint. Returns `{ success: true }` on success or `{ success: false, message: '...' }` on failure. |
-| `logout` | `() => Promise<void>` | Clears all tokens, AsyncStorage entries, and the React Query cache, then redirects to the landing screen. |
+| `logout` | `() => Promise<void>` | Clears all tokens, AsyncStorage entries, and the React Query cache, then sets `isAuthenticated` to `false`. |
 
 ## Login Flow
 
@@ -51,7 +51,7 @@ interface AuthContextType {
     The `LoginScreen` collects a username and password and calls `login(username, password)` from `useAuth()`.
   </Step>
   <Step title="POST to the token endpoint">
-    `login()` sends a `POST` request to `/api/user/token/` with the credentials in the request body:
+    `login()` sends a `POST` request to `/user/token/` with the credentials in the request body:
 
     ```json
     {
@@ -64,8 +64,8 @@ interface AuthContextType {
     On a `200` response the backend returns both tokens. The context stores them immediately:
 
     ```typescript
-    await SecureStore.setItemAsync('accessToken', data.access);
-    await SecureStore.setItemAsync('refreshToken', data.refresh);
+    await SecureStore.setItemAsync('accessToken', access);
+    await SecureStore.setItemAsync('refreshToken', refresh);
     ```
   </Step>
   <Step title="Authentication state updated">
@@ -83,27 +83,31 @@ Request sent
      ▼
 Response received
      │
-  401? ──Yes──► Read refreshToken from SecureStore
+  401? ──Yes──► Set originalRequest._retry = true
+                Read refreshToken from SecureStore
                        │
-                    POST /api/user/token/refresh
+                    POST user/token/refresh
                        │
                ┌───────┴──────────┐
              200 OK            Error / 401
                │                  │
-        Update accessToken     logout()
-        in SecureStore             │
-               │              Redirect to Login
-        Retry original
-          request
+        Store new accessToken   logout()
+        in SecureStore
+               │
+        Set Authorization header
+        on original request
+               │
+        Retry original request
                │
         Return response
 ```
 
 Key behaviours of the interceptor:
 
-- All in-flight requests that arrive while a refresh is already in progress are **queued** and replayed once the new token is available — there is no thundering-herd of parallel refresh calls.
-- If the refresh endpoint itself returns a non-`2xx` status, `logout()` is called immediately to clear all credentials and prevent an infinite retry loop.
-- The interceptor sets the `Authorization` header on the retried request using the freshly stored access token.
+- The `_retry` flag on the original request config is set to `true` before the refresh attempt, preventing an infinite retry loop if the refresh endpoint itself returns `401`.
+- If no `refreshToken` is found in SecureStore at the time of a `401`, `logout()` is called immediately without attempting a refresh.
+- If the refresh call throws, `logout()` is called to clear all credentials.
+- On a successful refresh, the new access token is stored in SecureStore and the `Authorization` header is updated on the original request before it is retried.
 
 ## Session Restoration
 
@@ -111,18 +115,20 @@ When the app is opened after being closed (cold start or background eviction), `
 
 ```typescript
 useEffect(() => {
-  const restoreSession = async () => {
+  const loadUser = async () => {
     const token = await SecureStore.getItemAsync('accessToken');
-    if (token) {
-      setIsAuthenticated(true);
-    }
+    token ?? setIsAuthenticated(true);
     setIsLoading(false);
   };
-  restoreSession();
+  loadUser();
 }, []);
 ```
 
-While `isLoading` is `true` the app renders a splash/loading indicator. This prevents a returning user from seeing the login screen for a single frame before being redirected to the main app.
+<Warning>
+The session restore logic uses the nullish-coalescing operator (`??`) rather than an explicit `if` check. Because `??` evaluates the right-hand side only when the left-hand side is `null` or `undefined`, `setIsAuthenticated(true)` is called when `token` is **null** (no stored token), which is the opposite of the intended behaviour. In practice, a user without a stored token will briefly appear authenticated. This is a known bug in the source. The intended behaviour is: if a token exists, set `isAuthenticated` to `true`.
+</Warning>
+
+While `isLoading` is `true` the app renders a splash/loading indicator.
 
 ## Logout
 
@@ -136,12 +142,12 @@ Calling `logout()` performs a full local sign-out without a network round-trip:
     ```
   </Step>
   <Step title="Clear AsyncStorage">
-    The geo filter preference and any other AsyncStorage keys written by the app are removed to ensure the next user (or a re-login by the same user) starts from a clean state.
+    `await AsyncStorage.clear()` removes the geo filter preference and any other AsyncStorage keys written by the app, ensuring the next user (or a re-login by the same user) starts from a clean state.
   </Step>
   <Step title="Reset the React Query cache">
     `queryClient.clear()` removes all cached server state — recommendations, liked history, search results — preventing stale data from a previous session being briefly visible after a new login.
   </Step>
-  <Step title="Navigate to Landing">
+  <Step title="Update authentication state">
     `isAuthenticated` is set to `false`, and React Navigation redirects to the `Landing` screen.
   </Step>
 </Steps>
@@ -163,7 +169,7 @@ const { isAuthenticated, login, logout } = useAuth();
 const handleLogin = async () => {
   const result = await login('alice', 's3cur3p@ss');
   if (!result.success) {
-    console.error(result.message); // e.g. "Invalid credentials"
+    console.error(result.message); // e.g. "Invalid username or password"
   }
 };
 
@@ -174,5 +180,5 @@ const handleLogout = async () => {
 ```
 
 <Note>
-`useAuth()` must be called inside a component that is a descendant of `<AuthProvider>`. Calling it outside the provider tree throws a runtime error: `useAuth must be used within an AuthProvider`. Ensure `<AuthProvider>` wraps the root navigator in `App.tsx` (or `_layout.tsx`).
+`useAuth()` must be called inside a component that is a descendant of `<AuthProvider>`. Calling it outside the provider tree throws a runtime error: `useAuth must be used within AuthProvider`. Ensure `<AuthProvider>` wraps the root navigator in `App.tsx` (or `_layout.tsx`).
 </Note>

@@ -1,7 +1,7 @@
 ---
 title: "POST /api/user/reset/ — Reset User Preference Profile"
 sidebarTitle: "Reset Profile"
-description: "Wipe a user's preference profile back to zero vectors, clearing all learned preferences. Subsequent recommendations will start fresh until preferences are set again."
+description: "Zero out all three preference vectors on the user's profile. Recommendations revert to generic results until new preferences are set via Set Preferences."
 ---
 
 This endpoint completely zeroes out the authenticated user's `UserProfile`, reverting all three preference vectors to their registration-time defaults. It is useful when a user wants to restart their recommendation journey from scratch — for example, after a significant change in interests or when onboarding onto a shared device. Internally it calls Django's `update_or_create` on `UserProfile`, so it is safe to call even if the profile record was somehow missing. The operation is idempotent: calling it multiple times produces the same result. No request body is needed, and the only required credential is a valid Bearer access token.

@@ -37,14 +37,14 @@ When a like is successfully recorded, the user's preference profile is updated u
 
 | Vector Component | Update Rule | Learning Rate |
 |-----------------|-------------|---------------|
-| `labelMHE` | Additive — `profile.labelMHE += item.labelMHE × 0.2` | α = 0.2 |
-| `labelEmbed` | Move toward item — `profile.labelEmbed += (item.labelEmbed − profile.labelEmbed) × 0.15` | α = 0.15 |
-| `summaryEmbed` | Move toward item — `profile.summaryEmbed += (item.summaryEmbed − profile.summaryEmbed) × 0.1` | α = 0.1 |
+| `labelMHE` | Additive — `profile.labelMHE += item.labelMHE * MHE_ALPHA` | MHE_ALPHA = 0.2 |
+| `labelEmbed` | Weighted blend — `profile.labelEmbed = (0.85 * profile.labelEmbed) + (0.15 * item.labelEmbed)` | LABEL_EMBED_ALPHA = 0.15 |
+| `summaryEmbed` | Weighted blend — `profile.summaryEmbed = (0.9 * profile.summaryEmbed) + (0.1 * item.summaryEmbed)` | SUMMARY_EMBED_ALPHA = 0.1 |
 
 The resulting profile vector is normalised after each update to maintain consistent cosine similarity comparisons across all future recommendation calls.
 
 <Tip>
-  A `profile_delta` value — the cosine distance between the profile vector **before** and **after** the like — is computed and stored alongside each interaction record. This delta can be used to measure how strongly a particular like shifted the preference profile, enabling future analytics on which types of attractions most influence a user's taste model.
+  A `profile_delta` value — the cosine distance between the profile vector **before** and **after** the like — is computed and stored alongside each interaction record. Additionally, after every **10th interaction** (likes and dislikes combined), an **Intra-List Diversity (ILD)** score is computed over the last 10 interactions and stored as a `UserRecommendationBatch` record for analytics.
 </Tip>
 
 ## Response

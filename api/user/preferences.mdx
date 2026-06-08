@@ -38,7 +38,7 @@ This endpoint populates the authenticated user's recommendation profile with the
 </ParamField>
 
 <ParamField body="labels" type="string[]" required>
-  A non-empty array of human-readable strings describing the user's interests. These strings are joined and encoded by the `all-MiniLM-L12-v2` sentence-transformer into a 384-dimensional vector. The resulting embedding is stored as both `labelEmbed` and `summaryEmbed` on the user's `UserProfile` and is used for semantic similarity matching during recommendation retrieval. More descriptive, specific labels yield more precise semantic embeddings.
+  An array of human-readable strings describing the user's interests. Each string is encoded individually by the `all-MiniLM-L12-v2` sentence-transformer, and the resulting embeddings are averaged into a single 384-dimensional vector. That vector is stored as both `labelEmbed` and `summaryEmbed` on the user's `UserProfile` and is used for semantic similarity matching during recommendation retrieval. If the array is empty, `labelEmbed` and `summaryEmbed` are left unchanged and only `labelMHE` is updated. More descriptive, specific labels yield more precise semantic embeddings.
 
   Example values: `"historic castle"`, `"coastal walk"`, `"national park"`, `"contemporary art museum"`.
 </ParamField>
@@ -109,8 +109,8 @@ Returned when the `Authorization` header is absent, the access token is missing,
 When a valid request is received, the backend performs the following steps:
 
 1. Validates `preferences` (list, length 9) and `labels` (list).
-2. Loads the `all-MiniLM-L12-v2` sentence-transformer model.
-3. Encodes the `labels` array into a single 384-dimensional floating-point vector.
+2. Passes `labels` to the pre-loaded `all-MiniLM-L12-v2` sentence-transformer model.
+3. Encodes each label individually, then averages the embeddings (`np.mean(embeddings, axis=0)`) into a single 384-dimensional vector.
 4. Persists the update to the authenticated user's `UserProfile`:
 
 | Field | Value stored |

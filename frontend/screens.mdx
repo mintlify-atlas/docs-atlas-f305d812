@@ -1,5 +1,5 @@
 ---
-title: "App Screens and Navigation Guide"
+title: "App Screens and Navigation for UK Travel Recommendation"
 sidebarTitle: "Screens"
 description: "Tour every screen in the UK Travel Recommendation app: onboarding, discovery swipe deck, liked attractions grid, map view, and settings."
 ---
@@ -57,7 +57,7 @@ New users are routed through a three-screen preference-gathering flow immediatel
 
 <Steps>
   <Step title="PreferenceCat — Choose Categories">
-    Displays the nine **MHE (Mental Health England) attraction categories** as selectable tiles. The user taps the categories they are interested in, and the screen builds two parallel arrays:
+    Displays the attraction categories as selectable tiles. The user taps the categories they are interested in, and the screen builds two parallel arrays:
 
     - `preferences: (0 | 1)[]` — a binary vector (1 = interested, 0 = not interested) with one element per category.
     - `labels: string[]` — the human-readable names of the selected categories.
@@ -69,12 +69,12 @@ New users are routed through a three-screen preference-gathering flow immediatel
 
     Users can skip this step; in that case recommendations are drawn from the full UK dataset.
   </Step>
-  <Step title="PreferenceImport / AttractionImport — Import Visited Attractions">
+  <Step title="PreferenceImport — Import Visited Attractions">
     Allows the user to search for attractions they have already visited and bulk-import them as liked items. This seeds the recommendation engine with real historical signal before the user has made any in-app swipes.
 
     - A search field calls `searchAttractions(name)` (GET `/recommendations/search?q=<name>`) to find matching attractions.
     - Selected attractions are submitted via `addVisitedAttractions(ids)` (POST `/recommendations/like/bulk/`).
-    - This screen is also accessible from Settings (`AttractionImport` route) for users who want to add more visited places later.
+    - This screen is also accessible from Settings via the `AttractionImport` route for users who want to add more visited places later.
   </Step>
 </Steps>
 
@@ -90,8 +90,8 @@ The `DiscoveryScreen` is the heart of the app — a continuously refreshing swip
     The `useRecommendations` hook monitors `currentIndex`. When five or fewer cards remain in the local cache, it automatically fetches the next page from `/recommendations` (with the current `geoFilter` appended) and appends the new items to the deck.
   </Card>
   <Card title="Swipe Actions" icon="thumbs-up">
-    - **Swipe right** → `onSwipeRight(id)` → `likeAttraction(id)` (POST `/recommendations/like/<id>`) → invalidates the `likedHistory` query so the Liked tab reflects the change immediately.
-    - **Swipe left** → `onSwipeLeft(id)` → `dislikeAttraction(id)` (POST `/recommendations/dislike/<id>`).
+    - **Swipe right** → `onSwipeRight(id)` → `likeMutation.mutate(id)` → calls `likeAttraction(id)` (POST `/recommendations/like/<id>`) → on success, invalidates the `likedHistory` query so the Liked tab reflects the change immediately.
+    - **Swipe left** → `onSwipeLeft(id)` → calls `dislikeAttraction(id)` directly (POST `/recommendations/dislike/<id>`).
   </Card>
   <Card title="Attraction Detail Sheet" icon="circle-info">
     Tapping a card (rather than swiping) opens a `@gorhom/bottom-sheet` panel with extended details: full description, address, opening hours, and a link to an external website if available.
@@ -115,9 +115,9 @@ The **Liked** tab shows every attraction the user has swiped right on, organised
   </Step>
 </Steps>
 
-## Settings Screen
+## Settings Screens
 
-The `SettingsScreen` (accessible from the **Profile** tab) contains two main sub-screens for updating persistent user preferences:
+The `SettingsScreen` (accessible from the **Profile** tab) contains two sub-screens for updating persistent user preferences:
 
 <Accordion title="UpdateGeoFilter">
   Lets the user change their geographic recommendation area after onboarding. Selecting a new area writes the updated query-string fragment to AsyncStorage (`geoFilter`). The next `getRecommendations()` call will use the new value. The current in-memory deck is **not** invalidated immediately — the change takes effect on the next page fetch.

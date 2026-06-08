@@ -207,5 +207,5 @@ A **405 Method Not Allowed** status is expected — it confirms the endpoint exi
   ports:
     - "5433:5432"   # host port 5433 → container port 5432
   ```
-  Remember to update `POSTGRES_HOST_PORT` in any connection strings if you make this change.
+  Remember to update any database connection strings or tooling that references port `5432` on the host if you make this change.
 </Accordion>

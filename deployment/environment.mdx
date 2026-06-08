@@ -1,7 +1,7 @@
 ---
 title: "Environment Variables for UK Travel Recommendation"
 sidebarTitle: "Environment"
-description: "Configure the Django backend and React Native frontend using environment variables. Reference for all required and optional settings with example values."
+description: "Configure the Django backend and Expo frontend using environment variables. Reference for all required settings, example values, and JWT token lifetimes."
 ---
 
 The UK Travel Recommendation project separates secrets and environment-specific configuration from source code by using `.env` files that are never committed to version control. The Django backend reads its variables from `backend/.env` at startup (via `python-dotenv`), while the React Native/Expo frontend reads variables prefixed with `EXPO_PUBLIC_` from `frontend/.env` or `frontend/.env.local`. This page is the authoritative reference for every variable the project recognises, along with guidance on generating safe values and understanding the JWT token lifetimes that are baked into `settings.py`.
@@ -98,6 +98,8 @@ The following JWT settings are configured directly in `backend/app/settings.py` 
     Long-lived tokens used exclusively to obtain new access tokens via the `/api/token/refresh/` endpoint. Store these securely in the app's secure storage (e.g. Expo SecureStore), never in AsyncStorage.
   </Card>
 </CardGroup>
+
+The `ROTATE_REFRESH_TOKENS` setting is `False`, meaning refresh tokens are **not** rotated on use. A single refresh token remains valid for its full 30-day lifetime unless it is explicitly revoked.
 
 ## Security Warnings
 

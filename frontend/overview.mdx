@@ -12,19 +12,20 @@ The following core libraries underpin the application:
 
 | Library | Version | Purpose |
 |---|---|---|
-| **Expo SDK** | 54 | Build tooling, OTA updates, native module access |
-| **React Native** | 0.81.5 | Cross-platform UI primitives |
-| **React** | 19 | Component model and concurrent rendering |
-| **NativeWind** + **Tailwind CSS** | — | Utility-class styling for React Native |
-| **TanStack Query** | v5 | Server-state fetching, caching, and invalidation |
-| **React Navigation** | — | Stack and bottom-tab navigation |
-| **axios** | v1 | HTTP client with request/response interceptors |
-| **expo-secure-store** | — | Encrypted JWT storage on device |
-| **@react-native-async-storage/async-storage** | — | Persistent geo filter preference |
-| **react-native-maps** | — | Interactive map view for liked attractions |
-| **rn-swiper-list** | — | Tinder-style swipeable card deck |
-| **@gorhom/bottom-sheet** | — | Attraction detail sheet on discovery cards |
-| **lucide-react-native** | — | Icon set |
+| **expo** | `^54.0.0` | Build tooling, OTA updates, native module access |
+| **react-native** | `0.81.5` | Cross-platform UI primitives |
+| **react** | `19.1.0` | Component model and concurrent rendering |
+| **nativewind** | `latest` | Utility-class styling for React Native |
+| **tailwindcss** | `^3.4.0` | Tailwind CSS compiler used by NativeWind |
+| **@tanstack/react-query** | `^5.90.21` | Server-state fetching, caching, and invalidation |
+| **@react-navigation/native** | `^7.1.28` | Stack and bottom-tab navigation |
+| **axios** | `^1.13.5` | HTTP client with request/response interceptors |
+| **expo-secure-store** | `~15.0.8` | Encrypted JWT storage on device |
+| **@react-native-async-storage/async-storage** | `2.2.0` | Persistent geo filter preference |
+| **react-native-maps** | `1.20.1` | Interactive map view for liked attractions |
+| **rn-swiper-list** | `^3.0.0` *(devDependency)* | Tinder-style swipeable card deck |
+| **@gorhom/bottom-sheet** | `^5` | Attraction detail sheet on discovery cards |
+| **lucide-react-native** | `^0.563.0` | Icon set |
 
 ## Navigation Structure
 
@@ -98,14 +99,23 @@ Styling is handled by **NativeWind**, which compiles Tailwind CSS utility classe
 ```typescript
 // theme/colors.ts
 export const colors = {
-  background: '#fdf6e3',   // warm parchment
-  foreground: '#073642',   // dark slate
-  card:       '#eee8d5',   // light sand
-  primary:    '#d33682',   // vibrant pink
-  secondary:  '#2aa198',   // teal
-  accent:     '#cb4b16',   // burnt orange
-  destructive:'#dc322f',   // red
-  border:     '#839496',   // muted grey-blue
+  background:             '#fdf6e3',  // warm parchment
+  foreground:             '#073642',  // dark slate
+  card:                   '#eee8d5',  // light sand
+  'card-foreground':      '#073642',  // dark slate
+  primary:                '#d33682',  // vibrant pink
+  'primary-foreground':   '#ffffff',
+  secondary:              '#2aa198',  // teal
+  'secondary-foreground': '#ffffff',
+  muted:                  '#93a1a1',  // muted grey
+  'muted-foreground':     '#073642',  // dark slate
+  accent:                 '#cb4b16',  // burnt orange
+  'accent-foreground':    '#ffffff',
+  destructive:            '#dc322f',  // red
+  'destructive-foreground':'#ffffff',
+  border:                 '#839496',  // muted grey-blue
+  input:                  '#839496',  // muted grey-blue
+  ring:                   '#d33682',  // vibrant pink
 };
 ```
 

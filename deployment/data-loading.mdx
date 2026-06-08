@@ -1,5 +1,5 @@
 ---
-title: "Loading UK Attraction Data into the Database"
+title: "Loading UK Attraction Data into the PostgreSQL Database"
 sidebarTitle: "Data Loading"
 description: "Use the load_attractions management command to import UK attraction records and pre-computed embeddings into the pgvector database for recommendations."
 ---
@@ -36,7 +36,8 @@ Two files must both be present in the `backend/` directory (the directory that i
     | `coordinates` | WKT `POINT(longitude latitude)` string |
     | `wikipedia` | Wikipedia page URL |
     | `summary` | Text description used for embedding |
-    | `image_path` | Path or URL to the attraction image |
+    | `image` | Raw image field — dropped before the join |
+    | `image_path` | Path or URL to the attraction image (from the pickle join) |
     | `county` | UK county |
     | `region` | UK region |
     | `country` | Country within the UK (England, Scotland, Wales, etc.) |
@@ -51,6 +52,8 @@ Two files must both be present in the `backend/` directory (the directory that i
     | `labelMHE` | 9-dim | Multi-hot encoded category label vector |
     | `labelVectors` | 384-dim | Semantic embedding of the attraction's type labels |
     | `summaryVectors` | 384-dim | Semantic embedding of the attraction's text summary |
+    | `name` | — | Attraction name (dropped before join to avoid duplicates) |
+    | `image_path` | — | Image path (dropped before join; taken from CSV instead) |
   </Card>
 </CardGroup>
 
@@ -134,20 +137,24 @@ Understanding the internals of `load_attractions` helps you diagnose data issues
   The command reads both files into Pandas DataFrames:
 
   ```python
-  csv_df  = pd.read_csv("uk_attractions_main_valid_locations.csv", sep=";", encoding="utf-8")
-  pkl_df  = pd.read_pickle("uk_attractions_vectors.pkl")
+  df = pd.read_csv("uk_attractions_main_valid_locations.csv", sep=";", encoding="utf-8")
+  vectors_df = pd.read_pickle("uk_attractions_vectors.pkl")
   ```
 
-  The two DataFrames are joined on the `id` column. Any duplicate columns introduced by the merge (from overlapping column names in both files) are dropped automatically before processing continues.
+  The two DataFrames are joined on the `id` column. The `image` column is dropped from the CSV DataFrame before the join, and the `name` and `image_path` columns are dropped from the vectors DataFrame to avoid duplicates:
+
+  ```python
+  df2 = df.drop(columns="image").join(vectors_df.drop(columns=['name', 'image_path']), on="id")
+  ```
 </Accordion>
 
 <Accordion title="Step 2 — Parse WKT coordinates">
   Each row's `coordinates` field contains a Well-Known Text (WKT) string in the format `POINT(longitude latitude)`. The command parses this with the `shapely` library:
 
   ```python
-  point = wkt.loads(row['coordinates'])
-  longitude = point.x
-  latitude  = point.y
+  location = wkt.loads(row['coordinates'])
+  latitude = location.y
+  longtitude = location.x
   ```
 
   These are then stored as separate numeric fields on the `Attraction` model.
@@ -167,7 +174,7 @@ Understanding the internals of `load_attractions` helps you diagnose data issues
   Attraction objects are accumulated in a list and written to the database with `Attraction.objects.bulk_create()` in batches of 1 000 rows. This is significantly faster than inserting one row at a time and avoids holding the entire dataset in memory as a single transaction.
 
   ```python
-  Attraction.objects.bulk_create(batch, batch_size=1000)
+  Attraction.objects.bulk_create(objects_to_create, ignore_conflicts=True)
   ```
 </Accordion>
 

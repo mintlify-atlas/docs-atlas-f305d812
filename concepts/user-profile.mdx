@@ -1,7 +1,7 @@
 ---
 title: "User Preference Profile: How Your Taste is Modelled"
 sidebarTitle: "User Profile"
-description: "Understand how UK Travel Recommendation builds and updates your preference vector using MHE categories, sentence embeddings, and per-interaction learning rates."
+description: "Understand how UK Travel Recommendation builds and updates your preference vector using MHE, sentence embeddings, and per-interaction learning rates."
 ---
 
 Every registered user has a `UserProfile` record that acts as a living representation of their attraction preferences. Rather than storing an explicit list of favourite tags, the profile encodes taste as three numeric vectors that are continuously nudged by every swipe. Liked attractions pull the profile towards similar content; dislikes push it away. This continuous, incremental update strategy means the system learns your preferences gradually without requiring a manual re-configuration, and the first useful recommendations can appear even before onboarding is complete.
@@ -85,16 +85,15 @@ When you swipe right on an attraction (`POST /api/recommendations/like/<id>`), t
 | `summaryEmbed` | Exponential moving average                           | `α = 0.1`     |
 
 ```python
-MHE_ALPHA          = 0.2
-LABEL_EMBED_ALPHA  = 0.15
-SUMMARY_EMBED_ALPHA = 0.1
+class LikeAttractionView(InteractionView):
+    MHE_ALPHA = 0.2
+    LABEL_EMBED_ALPHA = 0.15
+    SUMMARY_EMBED_ALPHA = 0.1
 
-def _update_profile(self, profile, item):
-    profile.labelMHE   += (item.labelMHE * MHE_ALPHA)
-    profile.labelEmbed  = ((1 - LABEL_EMBED_ALPHA) * profile.labelEmbed) \
-                          + LABEL_EMBED_ALPHA * item.labelEmbed
-    profile.summaryEmbed = ((1 - SUMMARY_EMBED_ALPHA) * profile.summaryEmbed) \
-                           + SUMMARY_EMBED_ALPHA * item.summaryEmbed
+    def _update_profile(self, profile, item):
+        profile.labelMHE += (item.labelMHE * self.MHE_ALPHA)
+        profile.labelEmbed = ((1 - self.LABEL_EMBED_ALPHA) * profile.labelEmbed) + self.LABEL_EMBED_ALPHA * item.labelEmbed
+        profile.summaryEmbed = ((1 - self.SUMMARY_EMBED_ALPHA) * profile.summaryEmbed) + self.SUMMARY_EMBED_ALPHA * item.summaryEmbed
 ```
 
 The exponential moving average form `(1 − α) · old + α · new` ensures that `labelEmbed` and `summaryEmbed` remain bounded and that recent preferences carry more weight than distant history. `labelMHE` is purely additive, allowing category counts to grow indefinitely (they are L2-normalised at query time).

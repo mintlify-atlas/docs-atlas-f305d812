@@ -1,5 +1,5 @@
 ---
-title: "Frontend API Client Reference"
+title: "API Client Functions and Hooks for UK Travel Recommendation"
 sidebarTitle: "API Client"
 description: "Reference for all frontend API functions that call the UK Travel Recommendation backend: recommendations, interactions, user registration, and preferences."
 ---
@@ -42,7 +42,7 @@ All attraction-related API calls are defined in `api/attraction.ts` and imported
     Fetches the next batch of personalised attraction recommendations for the current user.
 
     ```typescript
-    export async function getRecommendations(): Promise<Attraction[]> {
+    export async function getRecommendations() {
       const geoFilter = (await AsyncStorage.getItem('geoFilter')) ?? '';
       const response = await axiosInstance.get(`/recommendations${geoFilter}`);
       return response.data;
@@ -55,7 +55,7 @@ All attraction-related API calls are defined in `api/attraction.ts` and imported
     | Path | `/recommendations` (optionally with a geo query string, e.g. `/recommendations?area=Scotland`) |
     | Auth required | Yes |
     | Geo filter | Read from `AsyncStorage` key `geoFilter` and appended verbatim to the URL path |
-    | Returns | `Attraction[]` |
+    | Returns | `response.data` — the raw backend payload |
 
     The geo filter value is a pre-formed query string (e.g. `?area=London`) written by the `UpdateGeoFilter` screen and read here without further processing.
   </Tab>
@@ -63,7 +63,7 @@ All attraction-related API calls are defined in `api/attraction.ts` and imported
     Full-text search across the attraction catalogue. Used by the `AttractionImport` screen to find places the user has visited.
 
     ```typescript
-    export async function searchAttractions(name: string): Promise<Attraction[]> {
+    export async function searchAttractions(name: string) {
       const response = await axiosInstance.get(`/recommendations/search?q=${name}`);
       return response.data;
     }
@@ -75,13 +75,13 @@ All attraction-related API calls are defined in `api/attraction.ts` and imported
     | Path | `/recommendations/search?q=<name>` |
     | Auth required | Yes |
     | Query param | `q` — the search string entered by the user |
-    | Returns | `Attraction[]` — matching attractions |
+    | Returns | `response.data` — matching attractions |
   </Tab>
   <Tab title="likeAttraction">
     Records a single right-swipe (like) interaction for a given attraction.
 
     ```typescript
-    export async function likeAttraction(id: string): Promise<void> {
+    export async function likeAttraction(id: string) {
       await axiosInstance.post(`/recommendations/like/${id}`);
     }
     ```
@@ -98,7 +98,7 @@ All attraction-related API calls are defined in `api/attraction.ts` and imported
     Records a left-swipe (dislike) interaction, signalling to the recommendation engine that this attraction is not a good match.
 
     ```typescript
-    export async function dislikeAttraction(id: string): Promise<void> {
+    export async function dislikeAttraction(id: string) {
       await axiosInstance.post(`/recommendations/dislike/${id}`);
     }
     ```
@@ -114,7 +114,7 @@ All attraction-related API calls are defined in `api/attraction.ts` and imported
     Bulk-imports a list of previously visited attractions as liked items. Used during onboarding and from the Settings `AttractionImport` screen.
 
     ```typescript
-    export async function addVisitedAttractions(ids: string[]): Promise<void> {
+    export async function addVisitedAttractions(ids: string[]) {
       await axiosInstance.post('/recommendations/like/bulk/', { ids });
     }
     ```
@@ -130,7 +130,7 @@ All attraction-related API calls are defined in `api/attraction.ts` and imported
     Retrieves the full liked-attractions history for the authenticated user. Consumed by the `LikedMain` screen via TanStack Query.
 
     ```typescript
-    export async function getLikedAttraction(): Promise<Attraction[]> {
+    export async function getLikedAttraction() {
       const response = await axiosInstance.get('/recommendations/history/liked');
       return response.data;
     }
@@ -141,7 +141,7 @@ All attraction-related API calls are defined in `api/attraction.ts` and imported
     | Method | `GET` |
     | Path | `/recommendations/history/liked` |
     | Auth required | Yes |
-    | Returns | `Attraction[]` |
+    | Returns | `response.data` — the user's liked attractions |
   </Tab>
 </Tabs>
 
@@ -160,7 +160,7 @@ User account and preference management functions are defined in `api/user.ts`.
     }: {
       username: string;
       password: string;
-    }): Promise<void> {
+    }) {
       await axiosInstance.post('user/register/', { username, password });
     }
     ```
@@ -186,7 +186,7 @@ User account and preference management functions are defined in `api/user.ts`.
     }: {
       preferences: (0 | 1)[];
       labels: string[];
-    }): Promise<void> {
+    }) {
       await axiosInstance.post('user/preferences/', { preferences, labels });
     }
     ```
@@ -198,13 +198,13 @@ User account and preference management functions are defined in `api/user.ts`.
     | Auth required | Yes |
     | Body | `{ preferences: (0\|1)[], labels: string[] }` |
 
-    The `preferences` array is a binary vector with one element per MHE category (1 = interested, 0 = not interested). The `labels` array contains the human-readable names of the selected categories and is stored for display purposes.
+    The `preferences` array is a binary vector with one element per attraction category (1 = interested, 0 = not interested). The `labels` array contains the human-readable names of the selected categories and is stored for display purposes.
   </Tab>
 </Tabs>
 
 ## useRecommendations Hook
 
-The `useRecommendations` hook in `hooks/useRecommendation.tsx` is the primary data layer for the `DiscoveryScreen`. It wraps a TanStack Query infinite query and co-locates all swipe interaction logic, so the screen component itself stays thin.
+The `useRecommendations` hook in `hooks/useRecommendation.tsx` is the primary data layer for the `DiscoveryScreen`. It wraps a TanStack Query `useInfiniteQuery` and co-locates all swipe interaction logic, so the screen component itself stays thin.
 
 ### Parameters
 
@@ -214,12 +214,12 @@ The hook takes no parameters. It reads the geo filter from `AsyncStorage` intern
 
 ```typescript
 const {
-  allRecommendations,  // Attraction[]   — deduplicated flat list from all fetched pages
-  currentIndex,        // number          — index of the card currently on top of the deck
-  setCurrentIndex,     // Dispatch<SetStateAction<number>> — update the current index
-  isLoading,           // boolean         — true while the first page is loading
-  onSwipeLeft,         // (id: string) => void — call on left swipe (dislike)
-  onSwipeRight,        // (id: string) => void — call on right swipe (like)
+  allRecommendations,  // Attraction[]              — deduplicated flat list from all fetched pages
+  currentIndex,        // number                    — index of the card currently on top of the deck
+  setCurrentIndex,     // (index: number) => void   — update the current index
+  isLoading,           // boolean                   — true while the first page is loading
+  onSwipeLeft,         // (id: string) => void      — call on left swipe (dislike)
+  onSwipeRight,        // (id: string) => void      — call on right swipe (like)
 } = useRecommendations();
 ```
 
@@ -227,14 +227,21 @@ const {
 |---|---|---|
 | `allRecommendations` | `Attraction[]` | Flat, deduplicated array of all recommendations fetched so far across all pages. Safe to index directly with `currentIndex`. |
 | `currentIndex` | `number` | Zero-based index of the card currently displayed on top of the swipe deck. |
-| `setCurrentIndex` | `Dispatch` | Setter for `currentIndex`. Increment this after each swipe to advance the deck. |
+| `setCurrentIndex` | `(index: number) => void` | Setter for `currentIndex`. Increment this after each swipe to advance the deck. |
 | `isLoading` | `boolean` | `true` during the initial fetch. Show a loading indicator while this is `true`. |
-| `onSwipeLeft` | `(id: string) => void` | Call with the swiped attraction's ID. Internally calls `dislikeAttraction(id)`. |
-| `onSwipeRight` | `(id: string) => void` | Call with the swiped attraction's ID. Internally calls `likeAttraction(id)` and invalidates the `likedHistory` query. |
+| `onSwipeLeft` | `(id: string) => void` | Call with the swiped attraction's ID. Calls `dislikeAttraction(id)` directly (not via a mutation). |
+| `onSwipeRight` | `(id: string) => void` | Call with the swiped attraction's ID. Calls `likeMutation.mutate(id)`, which invokes `likeAttraction(id)` and on success invalidates the `likedHistory` query. |
 
 ### Auto-Pagination
 
 The hook monitors `currentIndex` against the length of `allRecommendations`. When five or fewer cards remain (i.e. `allRecommendations.length - currentIndex <= 5`), the TanStack Query infinite query automatically fetches the next page from `getRecommendations()` and appends the new items. Duplicates are removed via a Set-based dedup step before the combined array is returned, ensuring the deck never shows the same attraction twice.
+
+### Swipe Behaviour
+
+The two swipe handlers have different internal implementations:
+
+- **`onSwipeLeft(id)`** — calls `dislikeAttraction(id)` directly. The call is fire-and-forget; there is no mutation wrapper and no cache invalidation.
+- **`onSwipeRight(id)`** — calls `likeMutation.mutate(id)`. The underlying `useMutation` calls `likeAttraction(id)` and, on success, runs `queryClient.invalidateQueries({ queryKey: ['likedHistory'] })` so the Liked tab updates immediately.
 
 ### Usage Example
 
