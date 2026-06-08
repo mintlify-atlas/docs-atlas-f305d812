@@ -59,24 +59,47 @@ New users are routed through a three-screen preference-gathering flow immediatel
 
 <Steps>
   <Step title="PreferenceCat — Choose Categories">
+    <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
+  <div style={{ flex: 1 }}>
     Displays the attraction categories as selectable tiles. The user taps the categories they are interested in, and the screen builds two parallel arrays:
 
-    - `preferences: (0 | 1)[]` — a binary vector (1 = interested, 0 = not interested) with one element per category.
-    - `labels: string[]` — the human-readable names of the selected categories.
+    * `preferences: (0 | 1)[]` — a binary vector (1 = interested, 0 = not interested) with one element per category.
+    * `labels: string[]` — the human-readable names of the selected categories.
 
     These are sent to `POST user/preferences/` via `setUserPreferences()` when the user proceeds to the next step.
+  </div>
+
+  <img src="/images/preferenceCategory.png" alt="Category selection screen" style={{ width: '220px', flexShrink: 0 }} />
+</div>
   </Step>
   <Step title="PreferenceArea — Pick a Geographic Area">
-    An optional step that lets the user restrict recommendations to a specific region of the UK (e.g. Scotland, South West England). The selection is stored as a query-string fragment in AsyncStorage under the key `geoFilter` (e.g. `?area=Scotland`).
+    <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
+  <div style={{ flex: 1 }}>
+    An optional step that lets the user restrict recommendations to a specific geographical area of the UK in three levels: County, Region and Country.
+
+    * The Map Picker UI is displayed with interactive SVG specifically for Region and Country whereas the areas are sufficiently big.
+    * For County, it is displayed as a searchable list instead due to its small size.
+
+    The selection is stored as a query-string fragment in AsyncStorage under the key `geoFilter` (e.g. `?area=Scotland`).
 
     Users can skip this step; in that case recommendations are drawn from the full UK dataset.
+  </div>
+
+  <img src="/images/preferenceArea-mapPicker.png" alt="Geographic area selection screen" style={{ width: '260px', flexShrink: 0 }} />
+</div>
   </Step>
   <Step title="PreferenceImport — Import Visited Attractions">
+    <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
+  <div style={{ flex: 1 }}>
     Allows the user to search for attractions they have already visited and bulk-import them as liked items. This seeds the recommendation engine with real historical signal before the user has made any in-app swipes.
 
-    - A search field calls `searchAttractions(name)` (GET `/recommendations/search?q=<name>`) to find matching attractions.
-    - Selected attractions are submitted via `addVisitedAttractions(ids)` (POST `/recommendations/like/bulk/`).
-    - This screen is also accessible from Settings via the `AttractionImport` route for users who want to add more visited places later.
+    * A search field calls `searchAttractions(name)` (GET `/recommendations/search?q=<name>`) to find matching attractions.
+    * Selected attractions are submitted via `addVisitedAttractions(ids)` (POST `/recommendations/like/bulk/`).
+    * This screen is also accessible from Settings via the `AttractionImport` route for users who want to add more visited places later.
+  </div>
+
+  <img src="/images/preferenceImport.png" alt="Import visited attractions screen" style={{ width: '260px', flexShrink: 0 }} />
+</div>
   </Step>
 </Steps>
 
