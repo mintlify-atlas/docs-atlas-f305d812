@@ -1,0 +1,100 @@
+---
+title: "POST /api/recommendations/like/{id} — Like an Attraction"
+sidebarTitle: "Like Attraction"
+description: "Record a like interaction for an attraction and update the user's preference profile vectors. Returns 400 if the attraction was already liked."
+---
+
+The Like endpoint records a positive interaction between the authenticated user and a specific attraction, then immediately updates the user's preference profile vectors to move them closer to the liked attraction. The update is performed inside a database transaction with a row-level lock on the user's profile, ensuring concurrent requests cannot corrupt the vector state. The operation is intentionally **idempotent-safe** — if the same attraction has already been liked, the endpoint returns a 400 error rather than silently re-applying the learning-rate update, which would skew the profile. Once a like is recorded, the attraction is excluded from all future calls to the [List Recommendations](/api/recommendations/list) endpoint for that user.
+
+## Endpoint
+
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **Path** | `/api/recommendations/like/{id}` |
+| **Auth** | Bearer token required |
+
+```
+POST http://localhost:8000/api/recommendations/like/<attraction_id>
+Authorization: Bearer <access_token>
+```
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the attraction to like. This matches the `id` field returned by the [List Recommendations](/api/recommendations/list) and [Search](/api/recommendations/search) endpoints.
+
+  **Example:** `/api/recommendations/like/tower-of-london`
+</ParamField>
+
+## Request Body
+
+This endpoint does not require a request body.
+
+## Profile Vector Update
+
+When a like is successfully recorded, the user's preference profile is updated using the following learning rates:
+
+| Vector Component | Update Rule | Learning Rate |
+|-----------------|-------------|---------------|
+| `labelMHE` | Additive — `profile.labelMHE += item.labelMHE × 0.2` | α = 0.2 |
+| `labelEmbed` | Move toward item — `profile.labelEmbed += (item.labelEmbed − profile.labelEmbed) × 0.15` | α = 0.15 |
+| `summaryEmbed` | Move toward item — `profile.summaryEmbed += (item.summaryEmbed − profile.summaryEmbed) × 0.1` | α = 0.1 |
+
+The resulting profile vector is normalised after each update to maintain consistent cosine similarity comparisons across all future recommendation calls.
+
+<Tip>
+  A `profile_delta` value — the cosine distance between the profile vector **before** and **after** the like — is computed and stored alongside each interaction record. This delta can be used to measure how strongly a particular like shifted the preference profile, enabling future analytics on which types of attractions most influence a user's taste model.
+</Tip>
+
+## Response
+
+### 200 OK — Like recorded successfully
+
+```json
+{
+  "message": "Preference updated",
+  "id": "<attraction_id>"
+}
+```
+
+<ResponseField name="message" type="string">
+  Confirmation string. Always `"Preference updated"` on success.
+</ResponseField>
+
+<ResponseField name="id" type="string">
+  The `id` of the attraction that was liked, echoed back in the response.
+</ResponseField>
+
+### 400 Bad Request — Already liked
+
+Returned when a `UserInteraction` record with `liked=True` already exists for this user and attraction pair.
+
+```json
+{
+  "error": "Already liked"
+}
+```
+
+<ResponseField name="error" type="string">
+  Error message. Always `"Already liked"` when this specific condition is triggered.
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Like an Attraction
+curl -X POST "http://localhost:8000/api/recommendations/like/tower-of-london" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```bash Already Liked (400 response)
+# Calling the same endpoint twice returns:
+# HTTP 400
+# { "error": "Already liked" }
+curl -X POST "http://localhost:8000/api/recommendations/like/tower-of-london" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+</CodeGroup>

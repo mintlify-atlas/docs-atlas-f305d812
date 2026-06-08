@@ -1,23 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "UK Travel Recommendation",
+  "projectType": "saas",
+  "projectName": "UK Travel Recommendation",
+  "projectDescription": "A full-stack mobile app that delivers personalised UK attraction recommendations using vector embeddings and swipe-based feedback to continuously refine a user's taste profile.",
   "theme": "almond",
-  "colors": {
-    "primary": "#2aa198",
-    "light": "#fdf6e3",
-    "dark": "#073642"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/viet2811/uk-travel-recommendation"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/viet2811/uk-travel-recommendation"
-    }
-  },
+  "primaryColor": "#2aa198",
+  "lightColor": "#fdf6e3",
+  "darkColor": "#073642",
   "navigation": {
     "tabs": [
       {
@@ -90,5 +78,30 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Personalised UK attraction recommendations using cosine similarity on vector embeddings",
+    "Swipe-based like/dislike interactions that update a user's preference profile in real time",
+    "Multi-Head Encoding (MHE) + sentence-transformer embeddings for hybrid user profiling",
+    "MMR (Maximal Marginal Relevance) re-ranking to balance relevance and diversity",
+    "Geo-area filtering by country, region, or county",
+    "Onboarding bulk-import of previously visited attractions",
+    "JWT authentication with automatic access token refresh",
+    "pgvector-backed PostgreSQL database for fast nearest-neighbour search",
+    "React Native / Expo mobile frontend with NativeWind styling",
+    "Docker Compose setup for backend + database"
+  ],
+  "publicApiSurface": [
+    "POST /api/user/register/",
+    "POST /api/user/token/",
+    "POST /api/user/token/refresh",
+    "POST /api/user/preferences/",
+    "POST /api/user/reset/",
+    "GET  /api/recommendations/",
+    "GET  /api/recommendations/search?q=",
+    "GET  /api/recommendations/history/liked",
+    "POST /api/recommendations/like/{id}",
+    "POST /api/recommendations/dislike/{id}",
+    "POST /api/recommendations/like/bulk/"
+  ]
 }

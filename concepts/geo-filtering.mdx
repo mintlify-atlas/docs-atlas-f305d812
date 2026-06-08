@@ -1,0 +1,164 @@
+---
+title: "Geo-Area Filtering for Location-Based Recommendations"
+sidebarTitle: "Geo Filtering"
+description: "Filter UK Travel Recommendation results to a specific country, region, or county. Understand how geo filters affect the candidate pool and kNN search depth."
+---
+
+By default, UK Travel Recommendation draws from the entire national attractions database when building your personalised feed. Geo-area filtering lets you narrow that pool to a specific part of the UK — useful when you are planning a weekend in Cornwall, researching a trip to Scotland, or simply want to discover hidden gems close to home. The recommendation endpoint accepts optional query parameters that restrict the database queryset before the vector search runs, so every attraction surfaced is guaranteed to be within the area you selected.
+
+## Overview
+
+Geo filtering is applied inside `RecommendationsListView.get_queryset()` in `recommendations/views.py`. When a geo query parameter is present, the Django ORM adds a case-insensitive `WHERE` clause against the relevant indexed column on the `Attraction` model (`county`, `region`, or `country`). The vector kNN search then runs only over that filtered set, meaning the cosine-distance ranking is fully personalised *within* your chosen area.
+
+<Note>
+  Because attractions outside the selected area are excluded before the kNN query, the `k` parameter (number of candidates retrieved before MMR re-ranking) is scaled down proportionally — see the [Effect on kNN Search](#effect-on-knn-search) section below.
+</Note>
+
+---
+
+## Filter Hierarchy
+
+Three query parameters are supported. Only the **most specific** parameter present is applied — they are evaluated in the order county → region → country, and the first match wins:
+
+<Tabs>
+  <Tab title="?county=">
+    Filters attractions whose `county` field matches the provided value (case-insensitive). This is the most granular level available.
+
+    ```
+    GET /api/recommendations/?county=Cornwall
+    GET /api/recommendations/?county=Kent
+    GET /api/recommendations/?county=Yorkshire
+    ```
+  </Tab>
+  <Tab title="?region=">
+    Filters attractions whose `region` field matches the provided value. Applied only when no `county` parameter is present.
+
+    ```
+    GET /api/recommendations/?region=South+East
+    GET /api/recommendations/?region=North+West
+    GET /api/recommendations/?region=Scotland
+    ```
+  </Tab>
+  <Tab title="?country=">
+    Filters attractions whose `country` field matches the provided value. Applied only when neither `county` nor `region` is present.
+
+    ```
+    GET /api/recommendations/?country=England
+    GET /api/recommendations/?country=Scotland
+    GET /api/recommendations/?country=Wales
+    ```
+  </Tab>
+</Tabs>
+
+The priority logic in the view is:
+
+```python
+if county_filter:
+    queryset = queryset.filter(county__iexact=county_filter)
+    k = 25
+elif region_filter:
+    queryset = queryset.filter(region__iexact=region_filter)
+    k = 50
+elif country_filter:
+    queryset = queryset.filter(country__iexact=country_filter)
+    k = 75
+```
+
+Providing multiple parameters (e.g. both `?county=` and `?region=`) will cause only the county filter to be applied; the region value is ignored.
+
+---
+
+## Effect on kNN Search
+
+Because a geo-filtered queryset is smaller than the full database, retrieving 100 candidates before MMR re-ranking would be wasteful — and in small counties, potentially impossible. The `k` value is therefore reduced proportionally with filter granularity:
+
+| Geo scope | Query parameter   | Candidate pool (k) | Notes                                          |
+|-----------|-------------------|--------------------|------------------------------------------------|
+| None      | *(no filter)*     | 100                | Full national database                         |
+| Country   | `?country=`       | 75                 | One of four UK countries                       |
+| Region    | `?region=`        | 50                 | Sub-national region (e.g. South East, Midlands) |
+| County    | `?county=`        | 25                 | Smallest administrative unit supported        |
+
+A lower `k` at county level reflects the fact that many counties contain fewer than 100 unvisited attractions in the database. Passing a larger `k` than the filtered set size would return duplicate rows; the adjusted values are conservative enough to avoid that while still giving MMR re-ranking a meaningful candidate pool to work with.
+
+<Note>
+  DB indexes on `county`, `region`, and `country` (`idx_county`, `idx_region`, `idx_country`) mean the geo filter `WHERE` clause is evaluated efficiently before the pgvector cosine scan, keeping query latency low even for large datasets.
+</Note>
+
+---
+
+## UK Geography Levels
+
+The three filter levels correspond to the real administrative geography of the United Kingdom:
+
+<CardGroup cols={3}>
+  <Card title="Countries" icon="flag">
+    The four constituent countries: **England**, **Scotland**, **Wales**, and **Northern Ireland**. Use `?country=` to browse attractions across an entire nation.
+  </Card>
+  <Card title="Regions" icon="map">
+    Sub-national groupings within each country — for example **South East**, **North West**, **Yorkshire and The Humber**, or **Highlands** in Scotland. Use `?region=` to focus on a broad travel corridor.
+  </Card>
+  <Card title="Counties" icon="location-dot">
+    The most granular level: traditional or ceremonial counties such as **Cornwall**, **Kent**, **Cumbria**, or **Pembrokeshire**. Use `?county=` when planning a specific local trip.
+  </Card>
+</CardGroup>
+
+---
+
+## Usage Examples
+
+<CodeGroup>
+
+```bash County filter (Cornwall)
+curl -X GET \
+  "https://api.example.com/api/recommendations/?county=Cornwall" \
+  -H "Authorization: Bearer <your_access_token>"
+```
+
+```bash Region filter (South East)
+curl -X GET \
+  "https://api.example.com/api/recommendations/?region=South+East" \
+  -H "Authorization: Bearer <your_access_token>"
+```
+
+```bash Country filter (Scotland)
+curl -X GET \
+  "https://api.example.com/api/recommendations/?country=Scotland" \
+  -H "Authorization: Bearer <your_access_token>"
+```
+
+```bash No filter (full UK)
+curl -X GET \
+  "https://api.example.com/api/recommendations/" \
+  -H "Authorization: Bearer <your_access_token>"
+```
+
+</CodeGroup>
+
+All requests require a valid JWT bearer token obtained from `POST /api/user/token/`.
+
+---
+
+## Frontend Integration
+
+The React Native (Expo) frontend stores the active geo filter as a query-string fragment in `AsyncStorage` under the key `geoFilter`. The `getRecommendations()` function in `frontend/api/attraction.ts` reads this value and appends it directly to the request URL:
+
+```typescript
+export async function getRecommendations() {
+  const geoFilter = (await AsyncStorage.getItem('geoFilter')) ?? '';
+  const response = await axiosInstance.get(`/recommendations${geoFilter}`);
+  return response.data;
+}
+```
+
+The stored value is a URL query string such as `?county=Cornwall` or `?region=South+East`. An empty string (`''`) means no filter is applied. This value is written by the **Geo Area Picker** screen (`GeoAreaPickerScreen.tsx`), which presents a dropdown to select the filter level (Country / Region / County) and a list to pick the specific area.
+
+```typescript
+// Written in GeoAreaPickerScreen when the user confirms their selection
+const area = selectedArea ? `?${curView}=${selectedArea}` : '';
+await AsyncStorage.setItem('geoFilter', area);
+```
+
+<Note>
+  The geo filter is stored locally on the device in `AsyncStorage`. Changing it in the Settings screen writes the new value immediately, but the updated filter only takes effect on the **next** recommendations fetch — the current swipe deck is not refreshed mid-session.
+</Note>

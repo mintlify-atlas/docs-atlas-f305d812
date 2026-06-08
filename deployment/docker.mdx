@@ -1,0 +1,211 @@
+---
+title: "Deploy UK Travel Recommendation with Docker Compose"
+sidebarTitle: "Docker Setup"
+description: "Run the Django backend and pgvector PostgreSQL database locally using Docker Compose. Covers build, start, migrations, and common troubleshooting steps."
+---
+
+The UK Travel Recommendation project ships with a `docker-compose.yaml` that orchestrates two services: the Django REST API backend and a pgvector-enabled PostgreSQL database. Using Docker Compose means you don't need to install Python, PostgreSQL, or any system dependencies on your host machine — everything runs inside containers with a single command. This page walks you through every step needed to get the full backend stack running locally, from cloning the repository to verifying a live API response.
+
+## Prerequisites
+
+Before you begin, make sure the following tools are installed on your machine:
+
+<CardGroup cols={2}>
+  <Card title="Docker Desktop" icon="docker">
+    Installs the Docker Engine, the Compose plugin, and a graphical dashboard. Available for macOS, Windows, and Linux at [docs.docker.com/get-docker](https://docs.docker.com/get-docker/).
+  </Card>
+  <Card title="Git" icon="code-branch">
+    Required to clone the repository. Download from [git-scm.com](https://git-scm.com/) or install via your OS package manager.
+  </Card>
+</CardGroup>
+
+<Note>
+  If you are on Linux and prefer not to install Docker Desktop, install the **Docker Engine** and the **Compose plugin** (`docker-compose-plugin`) separately via your distribution's package manager.
+</Note>
+
+## Services
+
+The `docker-compose.yaml` defines two services that work together to run the backend stack. Understanding what each service does helps you diagnose issues and customise the setup for your own environment.
+
+<CardGroup cols={2}>
+  <Card title="backend" icon="server">
+    **Image:** Built from `./backend/Dockerfile`
+
+    **Container name:** `backend_csproj`
+
+    Runs the Django REST API with `python manage.py runserver` on port **8000**. The `./backend` directory is mounted as a volume so code changes are reflected without rebuilding the image. Reads all secrets from `./backend/.env`.
+  </Card>
+  <Card title="db" icon="database">
+    **Image:** `pgvector/pgvector:pg15-bookworm`
+
+    **Container name:** `postgres_vector`
+
+    A PostgreSQL 15 instance with the **pgvector** extension pre-installed. Exposes port **5432** and persists data in the named volume `postgres_data`. Database credentials are injected via the same `backend/.env` file.
+  </Card>
+</CardGroup>
+
+## Starting the Stack
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone <your-repo-url>
+    cd uk-travel-recommendation
+    ```
+  </Step>
+
+  <Step title="Create the backend environment file">
+    The Docker Compose stack reads secrets from `backend/.env`. Create this file before starting the services — without it, both the backend and database containers will fail to start correctly.
+
+    ```bash
+    cp backend/.env.example backend/.env   # if an example file exists, or create manually
+    ```
+
+    See the [Environment Variables](/deployment/environment) page for a full reference of every required variable and an example `.env` file you can copy directly.
+  </Step>
+
+  <Step title="Build and start all services">
+    Run the following command from the project root (the directory that contains `docker-compose.yaml`):
+
+    ```bash
+    docker compose up --build
+    ```
+
+    The `--build` flag forces Docker to (re)build the `backend` image from `./backend/Dockerfile`. Subsequent starts that don't involve code changes can omit this flag for a faster startup.
+  </Step>
+
+  <Step title="Wait for both services to be healthy">
+    Watch the terminal output. You should see log lines from both containers. The stack is ready when you see Django's development server banner similar to:
+
+    ```
+    backend_csproj  | Starting development server at http://0.0.0.0:8000/
+    backend_csproj  | Quit the server with CONTROL-C.
+    ```
+
+    PostgreSQL is usually ready a few seconds before Django finishes starting. If the backend exits with a database connection error on the very first run, see the troubleshooting section below.
+  </Step>
+</Steps>
+
+## Running Migrations
+
+After the stack is up for the first time you must apply Django's database migrations. Open a new terminal window and run:
+
+```bash
+docker exec backend_csproj python manage.py migrate
+```
+
+This executes the following migrations in order:
+
+| Migration | What it does |
+|---|---|
+| `recommendations/0001_enable_vector_extension` | Runs `CREATE EXTENSION IF NOT EXISTS vector` inside PostgreSQL, activating pgvector |
+| `recommendations/0002_initial` | Creates the `Attraction` table with a `vector` column for embeddings |
+| `users/0001_initial` | Creates the `UserProfile`, `UserInteraction`, and `UserRecommendationBatch` tables |
+
+<Note>
+  Migration `0001_enable_vector_extension` must succeed before `0002_initial` can create the `Attraction` table. Both will run automatically in the correct order when you run `migrate`. If you are connecting to an external PostgreSQL instance, make sure the database user has `SUPERUSER` or `CREATE EXTENSION` privileges.
+</Note>
+
+## Verify the API Is Running
+
+With migrations applied, confirm the API is responding correctly:
+
+```bash
+curl -i http://localhost:8000/api/user/register/
+```
+
+A successful response looks like:
+
+```
+HTTP/1.1 405 Method Not Allowed
+Allow: POST, OPTIONS
+Content-Type: application/json
+...
+{"detail":"Method \"GET\" not allowed."}
+```
+
+A **405 Method Not Allowed** status is expected — it confirms the endpoint exists and Django is processing requests. The registration endpoint only accepts `POST` requests.
+
+## Stopping the Stack
+
+<Tabs>
+  <Tab title="Stop (keep data)">
+    Stop and remove the containers while preserving the `postgres_data` named volume. Your database state is retained and will be available on the next `docker compose up`.
+
+    ```bash
+    docker compose down
+    ```
+  </Tab>
+  <Tab title="Stop and wipe data">
+    Stop and remove the containers **and** delete the `postgres_data` volume. Use this when you want a completely clean slate — for example, before reloading fresh attraction data.
+
+    ```bash
+    docker compose down -v
+    ```
+
+    <Warning>
+      The `-v` flag permanently deletes all data stored in the `postgres_data` volume, including all attraction records, user accounts, and interactions. This cannot be undone.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Production Warning
+
+<Warning>
+  The `backend` service runs `python manage.py runserver 0.0.0.0:8000`. Django's built-in development server is **not suitable for production** — it is single-threaded, does not enforce security hardening, and is not designed to handle concurrent load. For production deployments, replace the `command` in `docker-compose.yaml` with a production WSGI server such as **Gunicorn** (`gunicorn app.wsgi:application --bind 0.0.0.0:8000`) and put a reverse proxy like **Nginx** in front of it.
+</Warning>
+
+## Troubleshooting
+
+<Accordion title="pgvector extension not found">
+  **Symptom:** Migration `0001_enable_vector_extension` fails with an error like `could not open extension control file ... vector.control`.
+
+  **Cause:** You are using a plain `postgres` image that does not have the pgvector shared library installed.
+
+  **Fix:** Make sure the `db` service in `docker-compose.yaml` uses the image `pgvector/pgvector:pg15-bookworm` exactly as specified. Do **not** substitute `postgres:15` or any other plain PostgreSQL image. If you previously started the stack with the wrong image, run `docker compose down -v` to remove the old volume and then restart.
+</Accordion>
+
+<Accordion title="backend cannot connect to db (connection refused)">
+  **Symptom:** The backend container exits immediately on first start with `django.db.utils.OperationalError: could not connect to server`.
+
+  **Cause:** Docker Compose's `depends_on` directive only waits for the `db` **container** to start, not for the PostgreSQL **process inside** it to finish initialising and accept connections. On slower machines PostgreSQL may still be running its initial setup when Django tries to connect.
+
+  **Fix:** Re-run `docker compose up` — PostgreSQL is already initialised from the first attempt and will be ready much faster. For a permanent fix, add a health check to the `db` service and update `depends_on` to wait for `service_healthy`:
+
+  ```yaml
+  db:
+    image: pgvector/pgvector:pg15-bookworm
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    depends_on:
+      db:
+        condition: service_healthy
+  ```
+</Accordion>
+
+<Accordion title="Port 5432 is already in use">
+  **Symptom:** Docker Compose fails with `bind: address already in use` on port `5432`.
+
+  **Cause:** A PostgreSQL instance is already running on your host machine and listening on port 5432.
+
+  **Fix (option 1):** Stop your local PostgreSQL service:
+  ```bash
+  # macOS (Homebrew)
+  brew services stop postgresql
+
+  # Linux (systemd)
+  sudo systemctl stop postgresql
+  ```
+
+  **Fix (option 2):** Change the host port mapping in `docker-compose.yaml` so the containerised database listens on a different host port (the container-internal port stays 5432):
+  ```yaml
+  ports:
+    - "5433:5432"   # host port 5433 → container port 5432
+  ```
+  Remember to update `POSTGRES_HOST_PORT` in any connection strings if you make this change.
+</Accordion>

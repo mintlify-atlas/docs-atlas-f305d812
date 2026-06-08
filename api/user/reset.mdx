@@ -1,0 +1,119 @@
+---
+title: "POST /api/user/reset/ — Reset User Preference Profile"
+sidebarTitle: "Reset Profile"
+description: "Wipe a user's preference profile back to zero vectors, clearing all learned preferences. Subsequent recommendations will start fresh until preferences are set again."
+---
+
+This endpoint completely zeroes out the authenticated user's `UserProfile`, reverting all three preference vectors to their registration-time defaults. It is useful when a user wants to restart their recommendation journey from scratch — for example, after a significant change in interests or when onboarding onto a shared device. Internally it calls Django's `update_or_create` on `UserProfile`, so it is safe to call even if the profile record was somehow missing. The operation is idempotent: calling it multiple times produces the same result. No request body is needed, and the only required credential is a valid Bearer access token.
+
+## Endpoint
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **Path** | `/api/user/reset/` |
+| **Auth required** | Yes — `Authorization: Bearer <access_token>` |
+| **Content-Type** | `application/json` (body not required) |
+
+## What is reset
+
+Calling this endpoint sets the following fields on the authenticated user's `UserProfile` to their zero-initialised defaults:
+
+| Field | Type | Reset value |
+|---|---|---|
+| `labelMHE` | 9-element float array | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` |
+| `labelEmbed` | 384-element float array | 384 × `0.0` |
+| `summaryEmbed` | 384-element float array | 384 × `0.0` |
+
+These are the same values written during [registration](/api/auth/register). After a reset, the recommendation engine will revert to neutral / generic results until [Set Preferences](/api/user/preferences) is called again.
+
+<Warning>
+  **Interaction history is preserved.** This endpoint resets the preference *vectors* only — it does **not** delete any `UserInteraction` records (likes, dislikes, or bulk-like events). Those records remain in the database. However, because the preference vector is zeroed, the recommendation engine will treat the user as if they have no stated preferences and will return results from a neutral baseline until new preferences are submitted via [Set Preferences](/api/user/preferences).
+</Warning>
+
+## Request Body
+
+No request body is required. The endpoint identifies the user from the JWT access token in the `Authorization` header.
+
+## Responses
+
+### 200 OK
+
+Returned when the `UserProfile` is successfully reset.
+
+<ResponseField name="message" type="string">
+  A confirmation string. Value is always `"user profile is reset."`.
+</ResponseField>
+
+```json 200 OK
+{
+  "message": "user profile is reset."
+}
+```
+
+### 401 Unauthorized
+
+Returned when the `Authorization` header is absent, the access token is missing, or the token has expired.
+
+```json 401 Unauthorized
+{
+  "detail": "Authentication credentials were not provided."
+}
+```
+
+<Note>
+  After receiving a `200` response, direct the user to the preferences onboarding flow — call [Set Preferences](/api/user/preferences) with a fresh set of `preferences` and `labels` before fetching recommendations. Fetching recommendations immediately after a reset will work but will return generic, non-personalised results.
+</Note>
+
+## Examples
+
+<CodeGroup>
+
+```bash cURL
+curl --request POST \
+  --url http://localhost:8000/api/user/reset/ \
+  --header 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' \
+  --header 'Content-Type: application/json'
+```
+
+```typescript TypeScript (axios)
+import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
+
+const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? 'http://localhost:8000/api';
+
+interface ResetResponse {
+  message: string;
+}
+
+async function resetProfile(): Promise<ResetResponse> {
+  const accessToken = await SecureStore.getItemAsync('access_token');
+
+  const response = await axios.post<ResetResponse>(
+    `${BASE_URL}/user/reset/`,
+    {},
+    {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  return response.data;
+}
+
+// Usage — e.g. behind a "Reset my profile" button in settings
+const result = await resetProfile();
+console.log(result.message); // "user profile is reset."
+
+// Redirect user to onboarding to set new preferences
+```
+
+</CodeGroup>
+
+## Typical use cases
+
+- **User requests a fresh start** — A settings screen "Reset my preferences" action calls this endpoint, then navigates the user back to the onboarding preference selector.
+- **Testing & development** — Quickly wipe a test account's preference vectors without deleting and re-registering the account.
+- **Profile corruption recovery** — If a `UserProfile` record is detected to be in an inconsistent state, this endpoint provides a guaranteed-clean reset via `update_or_create`.

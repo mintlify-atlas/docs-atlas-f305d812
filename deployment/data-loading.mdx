@@ -1,0 +1,202 @@
+---
+title: "Loading UK Attraction Data into the Database"
+sidebarTitle: "Data Loading"
+description: "Use the load_attractions management command to import UK attraction records and pre-computed embeddings into the pgvector database for recommendations."
+---
+
+Before the UK Travel Recommendation app can suggest any destinations, the database must be populated with attraction records — including names, geographic coordinates, categories, and pre-computed vector embeddings. These embeddings are what power the personalised recommendation engine: when a user swipes on attractions, their preferences are compared against stored vectors to surface similar places they are likely to enjoy. The `load_attractions` Django management command handles the entire import process, joining two source files, computing a final normalised embedding for each record, and bulk-inserting everything into the pgvector-enabled PostgreSQL database.
+
+## Overview
+
+Attraction data is not generated at runtime — it is sourced from two pre-prepared files that must be present in the `backend/` directory before you run the import command. Once loaded, the `Attraction` table contains every record needed for the recommendation engine to operate. Without this data, API calls to recommendation endpoints will return empty results.
+
+The import workflow is:
+
+1. Ensure the database is running and migrations have been applied
+2. Place the two data files in `backend/`
+3. Execute `python manage.py load_attractions` inside the backend container
+4. Confirm the "DB Load Complete!" message in the terminal output
+
+## Required Data Files
+
+Two files must both be present in the `backend/` directory (the directory that is mounted as `/app` inside the container) before running the command.
+
+<CardGroup cols={2}>
+  <Card title="uk_attractions_main_valid_locations.csv" icon="file-csv">
+    **Format:** CSV, semicolon-delimited (`;`), UTF-8 encoded
+
+    Contains the human-readable metadata for each attraction. Key columns:
+
+    | Column | Description |
+    |---|---|
+    | `id` | Unique identifier — used as the join key with the pickle file |
+    | `name` | Attraction name |
+    | `parentTypeLabel` | Broad category (e.g. *Museum*) |
+    | `typeLabel` | Specific sub-type label |
+    | `coordinates` | WKT `POINT(longitude latitude)` string |
+    | `wikipedia` | Wikipedia page URL |
+    | `summary` | Text description used for embedding |
+    | `image_path` | Path or URL to the attraction image |
+    | `county` | UK county |
+    | `region` | UK region |
+    | `country` | Country within the UK (England, Scotland, Wales, etc.) |
+  </Card>
+  <Card title="uk_attractions_vectors.pkl" icon="file">
+    **Format:** Pandas DataFrame serialised as a Python pickle (`.pkl`)
+
+    Contains pre-computed vector embeddings indexed by the same `id` column. Columns:
+
+    | Column | Dimensions | Description |
+    |---|---|---|
+    | `labelMHE` | 9-dim | Multi-hot encoded category label vector |
+    | `labelVectors` | 384-dim | Semantic embedding of the attraction's type labels |
+    | `summaryVectors` | 384-dim | Semantic embedding of the attraction's text summary |
+  </Card>
+</CardGroup>
+
+<Warning>
+  Both files must be placed inside the `backend/` directory on your host machine. Because `backend/` is mounted as a volume into the container at `/app`, files you add there become immediately visible to the running container without a rebuild.
+</Warning>
+
+## Running the Command
+
+<Steps>
+  <Step title="Copy the data files to the backend directory">
+    Place both data files in the `backend/` folder of the project:
+
+    ```bash
+    cp /path/to/uk_attractions_main_valid_locations.csv backend/
+    cp /path/to/uk_attractions_vectors.pkl backend/
+    ```
+
+    Verify the files are present:
+
+    ```bash
+    ls backend/uk_attractions_*
+    # backend/uk_attractions_main_valid_locations.csv
+    # backend/uk_attractions_vectors.pkl
+    ```
+  </Step>
+
+  <Step title="Ensure the backend container is running">
+    If the stack is not already up, start it:
+
+    ```bash
+    docker compose up -d
+    ```
+
+    Confirm the backend container is healthy:
+
+    ```bash
+    docker ps --filter name=backend_csproj
+    ```
+
+    The `STATUS` column should show `Up` (not `Exited` or `Restarting`).
+  </Step>
+
+  <Step title="Run the load_attractions command">
+    Execute the management command inside the running container:
+
+    ```bash
+    docker exec backend_csproj python manage.py load_attractions
+    ```
+
+    The command prints a progress dot (`.`) for each batch of 1 000 records inserted. A typical run for a large dataset might look like:
+
+    ```
+    ..........
+    DB Load Complete!
+    ```
+  </Step>
+
+  <Step title="Confirm the import succeeded">
+    You can verify the data was loaded by checking the record count directly in the database:
+
+    ```bash
+    docker exec postgres_vector psql -U postgres -d uktravel \
+      -c "SELECT COUNT(*) FROM recommendations_attraction;"
+    ```
+
+    Or via the Django shell inside the backend container:
+
+    ```bash
+    docker exec -it backend_csproj python manage.py shell -c \
+      "from recommendations.models import Attraction; print(Attraction.objects.count())"
+    ```
+  </Step>
+</Steps>
+
+## What the Command Does
+
+Understanding the internals of `load_attractions` helps you diagnose data issues and adapt the command if your source files change.
+
+<Accordion title="Step 1 — Load and join source files">
+  The command reads both files into Pandas DataFrames:
+
+  ```python
+  csv_df  = pd.read_csv("uk_attractions_main_valid_locations.csv", sep=";", encoding="utf-8")
+  pkl_df  = pd.read_pickle("uk_attractions_vectors.pkl")
+  ```
+
+  The two DataFrames are joined on the `id` column. Any duplicate columns introduced by the merge (from overlapping column names in both files) are dropped automatically before processing continues.
+</Accordion>
+
+<Accordion title="Step 2 — Parse WKT coordinates">
+  Each row's `coordinates` field contains a Well-Known Text (WKT) string in the format `POINT(longitude latitude)`. The command parses this with the `shapely` library:
+
+  ```python
+  point = wkt.loads(row['coordinates'])
+  longitude = point.x
+  latitude  = point.y
+  ```
+
+  These are then stored as separate numeric fields on the `Attraction` model.
+</Accordion>
+
+<Accordion title="Step 3 — Compute the final embedding vector">
+  The three pre-computed vectors from the pickle file are concatenated and normalised into a single `finalVector` that the recommendation engine uses for cosine-similarity lookups:
+
+  ```python
+  finalVector = normalize(row['labelMHE'], row['labelVectors'], row['summaryVectors']).tolist()
+  ```
+
+  The `normalize` function concatenates the three arrays (9 + 384 + 384 = 777 dimensions) and applies L2 normalisation so that all stored vectors sit on the unit sphere, making cosine similarity equivalent to a dot product.
+</Accordion>
+
+<Accordion title="Step 4 — Bulk insert in batches of 1 000">
+  Attraction objects are accumulated in a list and written to the database with `Attraction.objects.bulk_create()` in batches of 1 000 rows. This is significantly faster than inserting one row at a time and avoids holding the entire dataset in memory as a single transaction.
+
+  ```python
+  Attraction.objects.bulk_create(batch, batch_size=1000)
+  ```
+</Accordion>
+
+## Re-Loading Data
+
+The `load_attractions` command is designed to be idempotent. Every time it runs, it deletes all existing attraction records before inserting the new ones:
+
+```python
+Attraction.objects.all().delete()
+```
+
+This means you can safely re-run the command as many times as needed — for example, after updating the source CSV or regenerating embeddings — without ending up with duplicate records. The full dataset is always replaced atomically.
+
+<Tip>
+  If you want to test a small subset of attractions locally, you can truncate either source file to a few hundred rows before running the command. The join-on-`id` logic will silently skip any `id` values that appear in only one of the two files.
+</Tip>
+
+## Prerequisites Reminder
+
+<Note>
+  Database migrations **must be applied before** running `load_attractions`. The command inserts directly into the `recommendations_attraction` table, which is created by migration `0002_initial`. If you have not yet run migrations, execute:
+
+  ```bash
+  docker exec backend_csproj python manage.py migrate
+  ```
+
+  See the [Docker Setup](/deployment/docker) page for the full migration walkthrough.
+</Note>
+
+<Warning>
+  Running `load_attractions` **permanently deletes all existing attraction records** before importing from the source files. Do not run this command with incomplete or corrupted data files — doing so will leave the database empty and break the recommendation endpoints until you re-run the command with valid files.
+</Warning>

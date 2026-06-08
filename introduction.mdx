@@ -1,0 +1,49 @@
+---
+title: "UK Travel Recommendation: Personalised UK Attraction Discovery"
+sidebarTitle: "Introduction"
+description: "UK Travel Recommendation is a full-stack mobile app that uses vector embeddings and swipe feedback to surface personalised UK attractions."
+---
+
+UK Travel Recommendation is a computer science final-year project that tackles a genuinely hard problem: given the enormous diversity of attractions spread across England, Scotland, Wales, and Northern Ireland, how do you surface the handful that a specific person will actually enjoy? The answer built here combines a **Django REST backend** powered by PostgreSQL with the `pgvector` extension for high-dimensional similarity search, and a **React Native / Expo** mobile frontend that lets users swipe through cards, learn their tastes in real time, and refine recommendations session after session. Rather than relying on collaborative filtering — which requires a large, pre-existing user base — the system represents every attraction and every user profile as the same 777-dimensional vector, making cold-start recommendations possible from the very first preference a user expresses.
+
+## What the Project Does
+
+At its core, UK Travel Recommendation solves three problems in sequence. First, it encodes attractions using a weighted concatenation of category labels (Multi-Hot Encoded), a semantic sentence-transformer embedding of the attraction's type, and a second sentence-transformer embedding of its summary text. Second, it maintains a live user-profile vector that is updated whenever the user swipes right (like) or left (dislike) on a card. Third, it queries the database for the *k* nearest attractions by cosine similarity, then re-ranks the results with Maximal Marginal Relevance (MMR) to balance relevance against diversity — so users are not shown ten nearly-identical seaside piers in a row.
+
+## Two Main Components
+
+The project is split into two clearly separated layers that communicate exclusively through a versioned REST API.
+
+**Backend API** — A Django 6 application with two apps (`users` and `recommendations`) that exposes endpoints under `/api/user/` and `/api/recommendations/`. Authentication is handled by `djangorestframework-simplejwt`, issuing short-lived access tokens (15 minutes) and long-lived refresh tokens (30 days). All vector operations — storage, indexing, and cosine-distance queries — run inside PostgreSQL via the `pgvector` extension, keeping the recommendation logic close to the data.
+
+**Mobile Frontend** — A React Native application built with Expo SDK 54 and styled with NativeWind (Tailwind CSS for React Native). TanStack Query v5 manages server state and cache invalidation, `axios` handles HTTP requests, and Expo Secure Store keeps JWT tokens safe on-device. The swipe interface is the primary interaction model: a right swipe signals interest, a left swipe signals disinterest, and each interaction immediately informs the next batch of recommendations.
+
+## Tech Stack at a Glance
+
+| Layer | Technology |
+|---|---|
+| Backend framework | Django 6 + Django REST Framework |
+| Vector database | PostgreSQL 15 + `pgvector` |
+| Embeddings | `sentence-transformers` (384-dim, `all-MiniLM-L6-v2`) |
+| Auth | `djangorestframework-simplejwt` (JWT) |
+| Mobile runtime | React Native + Expo SDK 54 |
+| Mobile styling | NativeWind (Tailwind) |
+| Mobile data fetching | TanStack Query v5 |
+| Containerisation | Docker Compose |
+
+## Explore the Documentation
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone the repo, spin up Docker Compose, load attraction data, and launch the Expo app in under 10 minutes.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Deep-dive into the system design: vector representation, the recommendation pipeline, and the authentication flow.
+  </Card>
+  <Card title="Auth API" icon="lock" href="/api/auth/register">
+    Explore the registration, login, and token-refresh endpoints that secure every request.
+  </Card>
+  <Card title="Recommendation Engine" icon="wand-magic-sparkles" href="/concepts/recommendation-engine">
+    Understand how 777-dimensional vectors, cosine similarity, and MMR re-ranking combine to personalise results.
+  </Card>
+</CardGroup>

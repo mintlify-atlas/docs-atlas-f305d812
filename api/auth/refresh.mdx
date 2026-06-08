@@ -1,0 +1,137 @@
+---
+title: "POST /api/user/token/refresh — Renew Access Token"
+sidebarTitle: "Refresh Token"
+description: "Use a valid refresh token to obtain a new access token without re-entering credentials. Access tokens expire after 15 minutes; refresh tokens last 30 days."
+---
+
+Access tokens are deliberately short-lived — they expire after **15 minutes** — to limit the window of exposure if one is intercepted. Rather than forcing users to re-enter their credentials every quarter of an hour, clients hold onto a long-lived **refresh token** (valid for 30 days) and silently exchange it for a fresh access token whenever the current one expires. This endpoint, provided by `djangorestframework-simplejwt`'s `TokenRefreshView`, performs that exchange. The refresh token itself is not rotated by default: the same refresh token can be used repeatedly until it expires or the user's account is deactivated. No `Authorization` header is required — the refresh token is the sole credential.
+
+## Endpoint
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **Path** | `/api/user/token/refresh` |
+| **Auth required** | No |
+| **Content-Type** | `application/json` |
+
+## The refresh flow
+
+```
+Client                                    Server
+  │                                          │
+  │  ── POST /api/user/token/ ─────────────> │  (login once)
+  │  <─ { access, refresh } ────────────────│
+  │                                          │
+  │  ── GET /api/... (Authorization: Bearer access) ──> │
+  │  <─ 200 OK ─────────────────────────────│
+  │                                          │
+  │  [15 minutes pass — access token expires]
+  │                                          │
+  │  ── GET /api/... ──────────────────────> │
+  │  <─ 401 Unauthorized ───────────────────│
+  │                                          │
+  │  ── POST /api/user/token/refresh ──────> │  (this endpoint)
+  │     { "refresh": "<refresh_token>" }     │
+  │  <─ { "access": "<new_access_token>" } ─│
+  │                                          │
+  │  ── GET /api/... (new access token) ───> │
+  │  <─ 200 OK ─────────────────────────────│
+```
+
+## Request Body
+
+<ParamField body="refresh" type="string" required>
+  The refresh token obtained from the [Login](/api/auth/login) endpoint. The token must be valid and not yet expired (30-day lifetime). A token that has been tampered with or belongs to a deactivated account will be rejected with `401`.
+</ParamField>
+
+## Responses
+
+### 200 OK
+
+Returned when the refresh token is valid. The response contains a new access token. The refresh token supplied in the request is **not** changed.
+
+<ResponseField name="access" type="string">
+  A freshly issued JWT access token. Valid for another **15 minutes** from the time of issue. Replace the expired token stored on the client with this new value.
+</ResponseField>
+
+```json 200 OK
+{
+  "access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzA5MDAwOTAwLCJpYXQiOjE3MDkwMDAwMDAsImp0aSI6Im5ld2p0aSIsInVzZXJfaWQiOjF9.newsignature"
+}
+```
+
+### 401 Unauthorized
+
+Returned when the refresh token is invalid, expired, or malformed.
+
+```json 401 Unauthorized
+{
+  "detail": "Token is invalid or expired",
+  "code": "token_not_valid"
+}
+```
+
+<Warning>
+  **If the refresh token expires, the user must log in again.** Refresh tokens last 30 days from the time of the original login. There is no mechanism to renew a refresh token without supplying credentials — once it is expired, redirect the user back to the login screen and call [POST /api/user/token/](/api/auth/login) with their username and password to start a new session.
+</Warning>
+
+## Examples
+
+<CodeGroup>
+
+```bash cURL
+curl --request POST \
+  --url http://localhost:8000/api/user/token/refresh \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }'
+```
+
+```typescript TypeScript (axios)
+import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
+
+const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? 'http://localhost:8000/api';
+
+async function refreshAccessToken(): Promise<string> {
+  const refreshToken = await SecureStore.getItemAsync('refresh_token');
+
+  if (!refreshToken) {
+    throw new Error('No refresh token stored — user must log in again.');
+  }
+
+  const response = await axios.post<{ access: string }>(
+    `${BASE_URL}/user/token/refresh`,
+    { refresh: refreshToken },
+    { headers: { 'Content-Type': 'application/json' } }
+  );
+
+  // Persist the new access token
+  await SecureStore.setItemAsync('access_token', response.data.access);
+
+  return response.data.access;
+}
+
+// Typical usage inside an axios response interceptor
+axios.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      const newAccessToken = await refreshAccessToken();
+      originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+      return axios(originalRequest);
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+</CodeGroup>
+
+<Note>
+  The TypeScript example above demonstrates a common pattern: an **axios response interceptor** that automatically retries a failed request with a refreshed access token whenever the server returns `401`. This means the rest of your application code never needs to manually handle token expiry.
+</Note>

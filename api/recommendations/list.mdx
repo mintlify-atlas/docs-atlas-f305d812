@@ -1,0 +1,156 @@
+---
+title: "GET /api/recommendations/ — Fetch Personalised Attractions"
+sidebarTitle: "List Recommendations"
+description: "Retrieve up to 10 personalised UK attraction recommendations ranked by cosine similarity and re-ranked with MMR for diversity. Supports geo-area filtering."
+---
+
+The List Recommendations endpoint is the core of the UK Travel Recommendation engine. It computes a cosine similarity score between the authenticated user's stored preference vector and every attraction the user has not yet interacted with, selects the top candidates (up to 100 depending on any active geo filter), and then applies **Maximal Marginal Relevance (MMR) re-ranking** to ensure the final ten results are both personally relevant and diverse — preventing a feed dominated by near-identical attraction types. Because the endpoint reads the user's live preference profile, the results shift with every like or dislike, making each call a fresh reflection of the user's evolving tastes.
+
+## Endpoint
+
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **Path** | `/api/recommendations/` |
+| **Auth** | Bearer token required |
+
+```
+GET http://localhost:8000/api/recommendations/
+Authorization: Bearer <access_token>
+```
+
+## Query Parameters
+
+<ParamField query="county" type="string">
+  Filter recommendations to attractions within a specific county. Matching is case-insensitive. When this parameter is supplied, the candidate pool is capped at **25 attractions** before MMR re-ranking.
+
+  **Example:** `county=Cornwall`
+</ParamField>
+
+<ParamField query="region" type="string">
+  Filter recommendations to attractions within a specific UK region. Matching is case-insensitive. When this parameter is supplied (and `county` is not), the candidate pool is capped at **50 attractions** before MMR re-ranking.
+
+  **Example:** `region=South East`
+</ParamField>
+
+<ParamField query="country" type="string">
+  Filter recommendations to attractions within a specific UK country. Matching is case-insensitive. When this parameter is supplied (and neither `county` nor `region` is present), the candidate pool is capped at **75 attractions** before MMR re-ranking.
+
+  **Example:** `country=England`
+</ParamField>
+
+<Note>
+  Only one geo filter is applied per request. Priority order is **county → region → country**. If you supply both `county` and `region`, only the `county` filter is used.
+</Note>
+
+<Note>
+  Attractions the user has already **liked or disliked** are fully excluded from the candidate pool before similarity ranking begins. Each call returns only unseen content.
+</Note>
+
+## Response
+
+Returns an array of exactly **10** attraction objects after MMR re-ranking.
+
+### 200 OK
+
+```json
+[
+  {
+    "id": "attraction-uuid-or-slug",
+    "name": "St Michael's Mount",
+    "parentTypeLabel": "Heritage",
+    "typeLabel": "Castle",
+    "latitude": 50.1174,
+    "longtitude": -5.4766,
+    "wikipedia": "https://en.wikipedia.org/wiki/St_Michael%27s_Mount",
+    "summary": "A tidal island and civil parish in Mount's Bay, Cornwall...",
+    "image_path": [
+      "https://example.com/images/st-michaels-1.jpg",
+      "https://example.com/images/st-michaels-2.jpg"
+    ],
+    "county": "Cornwall",
+    "region": "South West",
+    "country": "England"
+  }
+]
+```
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the attraction. Used as the path parameter in the like, dislike, and bulk-like endpoints.
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Display name of the attraction.
+</ResponseField>
+
+<ResponseField name="parentTypeLabel" type="string">
+  Broad category label for the attraction, e.g. `Heritage`, `Nature`, `Entertainment`.
+</ResponseField>
+
+<ResponseField name="typeLabel" type="string">
+  Specific type label within the parent category, e.g. `Castle`, `National Park`, `Museum`.
+</ResponseField>
+
+<ResponseField name="latitude" type="number">
+  Geographic latitude coordinate (WGS 84).
+</ResponseField>
+
+<ResponseField name="longtitude" type="number">
+  Geographic longitude coordinate (WGS 84). Note: field name is `longtitude` (matches the database column).
+</ResponseField>
+
+<ResponseField name="wikipedia" type="string">
+  URL to the attraction's Wikipedia article, if available. May be `null`.
+</ResponseField>
+
+<ResponseField name="summary" type="string">
+  A textual description of the attraction, typically derived from its Wikipedia summary.
+</ResponseField>
+
+<ResponseField name="image_path" type="array">
+  List of image URL strings for the attraction. May be an empty array if no images are stored.
+
+  <Expandable title="image_path items">
+    <ResponseField name="image_path[]" type="string">
+      A URL pointing to an image asset for this attraction.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="county" type="string">
+  The UK county in which the attraction is located, e.g. `Cornwall`, `Yorkshire`.
+</ResponseField>
+
+<ResponseField name="region" type="string">
+  The UK region in which the attraction is located, e.g. `South West`, `Yorkshire and The Humber`.
+</ResponseField>
+
+<ResponseField name="country" type="string">
+  The UK country in which the attraction is located, e.g. `England`, `Scotland`, `Wales`, `Northern Ireland`.
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash No Filter
+curl -X GET "http://localhost:8000/api/recommendations/" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```bash County Filter
+curl -X GET "http://localhost:8000/api/recommendations/?county=Cornwall" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```bash Region Filter
+curl -X GET "http://localhost:8000/api/recommendations/?region=South%20East" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```bash Country Filter
+curl -X GET "http://localhost:8000/api/recommendations/?country=Scotland" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+</CodeGroup>

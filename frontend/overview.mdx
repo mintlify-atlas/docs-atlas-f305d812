@@ -1,0 +1,172 @@
+---
+title: "React Native Frontend for UK Travel Recommendation"
+sidebarTitle: "Overview"
+description: "Explore the Expo/React Native frontend architecture: navigation structure, TanStack Query data layer, NativeWind styling, and the screen hierarchy."
+---
+
+The UK Travel Recommendation frontend is a cross-platform mobile application built with Expo SDK 54 and React Native 0.81.5. It delivers a swipe-based attraction discovery experience backed by vector-embedding recommendations from the Django REST API. The app is structured around three distinct navigation stacks — authentication, onboarding, and the main tabbed interface — with TanStack Query v5 managing all server state, an `AuthContext` handling JWT lifecycle, and NativeWind providing a Tailwind-compatible utility styling layer throughout.
+
+## Tech Stack
+
+The following core libraries underpin the application:
+
+| Library | Version | Purpose |
+|---|---|---|
+| **Expo SDK** | 54 | Build tooling, OTA updates, native module access |
+| **React Native** | 0.81.5 | Cross-platform UI primitives |
+| **React** | 19 | Component model and concurrent rendering |
+| **NativeWind** + **Tailwind CSS** | — | Utility-class styling for React Native |
+| **TanStack Query** | v5 | Server-state fetching, caching, and invalidation |
+| **React Navigation** | — | Stack and bottom-tab navigation |
+| **axios** | v1 | HTTP client with request/response interceptors |
+| **expo-secure-store** | — | Encrypted JWT storage on device |
+| **@react-native-async-storage/async-storage** | — | Persistent geo filter preference |
+| **react-native-maps** | — | Interactive map view for liked attractions |
+| **rn-swiper-list** | — | Tinder-style swipeable card deck |
+| **@gorhom/bottom-sheet** | — | Attraction detail sheet on discovery cards |
+| **lucide-react-native** | — | Icon set |
+
+## Navigation Structure
+
+The app uses a single root `NativeStackNavigator` whose screens branch into three logical groups. Unauthenticated users land in the **Auth stack**, complete the **Preference onboarding stack** on first sign-up, and then enter the **Main bottom-tab stack** for everyday use.
+
+```
+Root Stack
+├── Landing          (WelcomeScreen)
+├── Register         (RegisterScreen)
+├── Login            (LoginScreen)
+├── PreferenceStack
+│   ├── PreferenceCat    (category picker)
+│   ├── PreferenceArea   (geo area picker)
+│   └── PreferenceImport (bulk import visited)
+└── Main (Bottom Tabs)
+    ├── Discovery    (swipe deck)
+    ├── Liked        (liked attractions grid)
+    └── Profile / Settings
+```
+
+The full TypeScript parameter list for every route is defined in `types/navigation.tsx`:
+
+```typescript
+export type RootStackParamList = {
+  Landing: undefined;
+  Register: undefined;
+  Login: undefined;
+  PreferenceStack: undefined;
+  PreferenceCat: undefined;
+  PreferenceArea: undefined;
+  PreferenceImport: undefined;
+  Main: undefined;
+  Discovery: undefined;
+  Liked: undefined;
+  LikedMain: undefined;
+  LikedAreaScreen: { items: Attraction[]; areaName: string };
+  Profile: undefined;
+  Settings: undefined;
+  UpdateGeoFilter: undefined;
+  AttractionImport: undefined;
+};
+```
+
+<Note>
+`LikedAreaScreen` is the only parameterised route. It receives an array of `Attraction` objects and the name of the selected area so the map view can be pre-filtered without an additional network request.
+</Note>
+
+## State Management
+
+State in the app is deliberately split by concern:
+
+<CardGroup cols={2}>
+  <Card title="TanStack Query" icon="database">
+    Manages all server-originated state: the paginated recommendations feed, the liked-attractions history, and search results. Stale-while-revalidate semantics keep the UI snappy while background refreshes run automatically.
+  </Card>
+  <Card title="AuthContext" icon="lock">
+    Wraps the entire app and exposes `isAuthenticated`, `isLoading`, `login()`, and `logout()`. Tokens are persisted in `expo-secure-store` and rehydrated on every cold start.
+  </Card>
+  <Card title="AsyncStorage" icon="hard-drive">
+    Stores the user's geo filter string (e.g. `?area=London`). This lightweight preference does not need the encryption that SecureStore provides but does need to survive app restarts.
+  </Card>
+  <Card title="Local Component State" icon="layers">
+    Ephemeral UI state — sheet open/close, form field values, swipe deck index — lives in plain React `useState` and never escapes the component tree.
+  </Card>
+</CardGroup>
+
+## Theming
+
+Styling is handled by **NativeWind**, which compiles Tailwind CSS utility classes down to React Native `StyleSheet` objects at build time. Custom design tokens are declared in `theme/colors.ts` and made available as Tailwind colour names throughout the app:
+
+```typescript
+// theme/colors.ts
+export const colors = {
+  background: '#fdf6e3',   // warm parchment
+  foreground: '#073642',   // dark slate
+  card:       '#eee8d5',   // light sand
+  primary:    '#d33682',   // vibrant pink
+  secondary:  '#2aa198',   // teal
+  accent:     '#cb4b16',   // burnt orange
+  destructive:'#dc322f',   // red
+  border:     '#839496',   // muted grey-blue
+};
+```
+
+The palette is derived from the Solarized colour scheme, giving the app a warm, readable aesthetic that works well in both bright outdoor and indoor lighting conditions.
+
+## Key Dependencies
+
+<CardGroup cols={2}>
+  <Card title="Expo" icon="rocket">
+    Provides the managed build workflow, OTA update infrastructure, and access to native APIs (SecureStore, Camera, Location) without requiring a custom native build for development.
+  </Card>
+  <Card title="TanStack Query v5" icon="arrows-rotate">
+    Infinite query support powers the paginated recommendations feed. The `useRecommendations` hook triggers the next page fetch automatically when five or fewer cards remain in the deck.
+  </Card>
+  <Card title="NativeWind" icon="paintbrush">
+    Brings the full Tailwind CSS v3 utility vocabulary to React Native. Combined with the custom colour tokens, it eliminates bespoke `StyleSheet` boilerplate across the entire codebase.
+  </Card>
+  <Card title="React Navigation" icon="map">
+    Handles both the root native stack (for full-screen transitions) and the bottom-tab bar inside the `Main` screen. Deep linking and type-safe route params are configured via `RootStackParamList`.
+  </Card>
+  <Card title="react-native-maps" icon="location-dot">
+    Renders the `LikedAreaScreen` map, plotting liked attractions as map markers. On iOS it uses Apple Maps; on Android it defaults to Google Maps.
+  </Card>
+  <Card title="rn-swiper-list" icon="hand-pointer">
+    Powers the `DiscoveryScreen` card deck. Left swipes trigger `dislikeAttraction`, right swipes trigger `likeAttraction`, and the deck automatically re-fills from the TanStack Query infinite cache.
+  </Card>
+</CardGroup>
+
+## Running the Frontend
+
+Follow these steps to start the development server locally:
+
+<Steps>
+  <Step title="Configure the backend URL">
+    Create a `.env` file (or `.env.local`) in the frontend project root and set the Expo public environment variable that points to your running Django backend:
+
+    ```bash
+    EXPO_PUBLIC_BACKEND_URL=http://192.168.1.100:8000/api
+    ```
+
+    Use your machine's LAN IP address (not `localhost`) so that a physical device or emulator can reach the backend.
+  </Step>
+  <Step title="Install dependencies">
+    ```bash
+    npm install
+    ```
+  </Step>
+  <Step title="Start the Expo development server">
+    ```bash
+    npx expo start
+    ```
+
+    The Metro bundler launches and displays a QR code in the terminal.
+  </Step>
+  <Step title="Open on a device or emulator">
+    - **Physical device** — scan the QR code with the **Expo Go** app (iOS or Android).
+    - **iOS Simulator** — press `i` in the Metro terminal (requires Xcode).
+    - **Android Emulator** — press `a` in the Metro terminal (requires Android Studio).
+  </Step>
+</Steps>
+
+<Tip>
+If you are running the Django backend inside Docker, make sure the container's port is bound to `0.0.0.0` rather than `127.0.0.1` so that devices on your local network can reach it.
+</Tip>

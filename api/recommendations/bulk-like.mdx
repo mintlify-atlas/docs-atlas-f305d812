@@ -1,0 +1,110 @@
+---
+title: "POST /api/recommendations/like/bulk/ — Bulk Import Liked Attractions"
+sidebarTitle: "Bulk Like"
+description: "Import multiple previously visited attractions in a single request to bootstrap the user's preference profile during onboarding."
+---
+
+The Bulk Like endpoint is designed for the **onboarding flow**, where a new user indicates attractions they have already visited before they start swiping on the Discovery screen. Rather than calling the single Like endpoint repeatedly, the client sends a single list of attraction IDs and the server processes them all atomically — summing the MHE category vectors and averaging the embedding vectors across every new attraction in the batch, then applying one combined update to the user's preference profile. This batched averaging prevents the early interactions of an active onboarding user from over-fitting the profile toward a single attraction type. A special initialisation path handles the case where the user's profile vectors are still empty (all zeros), ensuring the first bulk import seeds a well-formed profile even when no prior interactions exist.
+
+## Endpoint
+
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **Path** | `/api/recommendations/like/bulk/` |
+| **Auth** | Bearer token required |
+
+```
+POST http://localhost:8000/api/recommendations/like/bulk/
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+## Request Body
+
+```json
+{
+  "ids": ["<attraction_id_1>", "<attraction_id_2>", "<attraction_id_3>"]
+}
+```
+
+<ParamField body="ids" type="array" required>
+  An array of attraction ID strings to like in bulk. Each string must match the `id` field of an existing attraction (as returned by the [Search](/api/recommendations/search) or [List Recommendations](/api/recommendations/list) endpoints).
+
+  Attractions that the user has **already interacted with** (liked or disliked) are silently skipped. If **all** provided IDs have already been interacted with, the endpoint returns a 400 error.
+
+  **Example:** `["tower-of-london", "edinburgh-castle", "st-fagans"]`
+</ParamField>
+
+## Profile Update Logic
+
+The bulk like update differs from the single like update in how it aggregates multiple attractions:
+
+1. **Filter new attractions** — IDs already present in the user's interaction history are excluded from the update.
+2. **Sum MHE vectors** — The `labelMHE` vectors of all new attractions are summed and added to the profile's `labelMHE` component.
+3. **Average embedding vectors** — The `labelEmbed` and `summaryEmbed` vectors are averaged across all new attractions and used as the target for the profile move step.
+4. **Initialisation path** — When `isInitialising=True` (the user's profile vectors are still zero-filled), the averaged attraction vectors are written directly as the starting profile instead of using incremental learning rates. This seeds a meaningful initial state for new users.
+5. **Delta computation** — The `profile_delta` (cosine distance before vs. after) is computed using the last attraction in the batch and stored on that interaction record.
+
+<Note>
+  This endpoint is designed specifically for **onboarding**. For individual swipe interactions during normal app usage, use the single [Like](/api/recommendations/like) and [Dislike](/api/recommendations/dislike) endpoints, which apply per-item learning rates and store individual deltas.
+</Note>
+
+## Response
+
+### 200 OK — Bulk like recorded successfully
+
+```json
+{
+  "message": "Preferences updated"
+}
+```
+
+<ResponseField name="message" type="string">
+  Confirmation string. Always `"Preferences updated"` on success.
+</ResponseField>
+
+### 400 Bad Request — All attractions already added
+
+Returned when every ID in the `ids` array corresponds to an attraction the user has already interacted with, leaving no new attractions to process.
+
+```json
+{
+  "message": "Attraction already added"
+}
+```
+
+<ResponseField name="message" type="string">
+  Error message. `"Attraction already added"` indicates all provided IDs were pre-existing interactions.
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Bulk Like — Onboarding Import
+curl -X POST "http://localhost:8000/api/recommendations/like/bulk/" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ids": [
+      "tower-of-london",
+      "edinburgh-castle",
+      "st-fagans-national-museum",
+      "giant-causeway",
+      "lake-district"
+    ]
+  }'
+```
+
+```bash Bulk Like — All Already Added (400 response)
+# All IDs were previously interacted with:
+# HTTP 400
+# { "message": "Attraction already added" }
+curl -X POST "http://localhost:8000/api/recommendations/like/bulk/" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "ids": ["tower-of-london"] }'
+```
+
+</CodeGroup>

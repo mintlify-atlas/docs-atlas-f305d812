@@ -1,0 +1,178 @@
+---
+title: "User Preference Profile: How Your Taste is Modelled"
+sidebarTitle: "User Profile"
+description: "Understand how UK Travel Recommendation builds and updates your preference vector using MHE categories, sentence embeddings, and per-interaction learning rates."
+---
+
+Every registered user has a `UserProfile` record that acts as a living representation of their attraction preferences. Rather than storing an explicit list of favourite tags, the profile encodes taste as three numeric vectors that are continuously nudged by every swipe. Liked attractions pull the profile towards similar content; dislikes push it away. This continuous, incremental update strategy means the system learns your preferences gradually without requiring a manual re-configuration, and the first useful recommendations can appear even before onboarding is complete.
+
+## Profile Structure
+
+The `UserProfile` model (`users/models.py`) stores three vector fields alongside a `OneToOneField` link to Django's built-in `User`:
+
+```python
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
+
+    labelMHE     = VectorField(dimensions=9)
+    labelEmbed   = VectorField(dimensions=384)
+    summaryEmbed = VectorField(dimensions=384)
+```
+
+<CardGroup cols={3}>
+  <Card title="labelMHE" icon="list-check">
+    **9 dimensions**
+
+    A multi-hot encoding over nine top-level attraction categories (e.g. Historic, Natural, Cultural). Each dimension accumulates positive evidence from likes and is clamped to zero on dislikes, so it always remains non-negative.
+  </Card>
+  <Card title="labelEmbed" icon="font">
+    **384 dimensions**
+
+    A sentence-transformer embedding capturing the semantic meaning of attraction *type labels* (e.g. "Medieval Castle", "National Park"). Updated via exponential moving average on likes, and deflected away from disliked directions.
+  </Card>
+  <Card title="summaryEmbed" icon="align-left">
+    **384 dimensions**
+
+    A sentence-transformer embedding of attraction *summary text*, capturing thematic and descriptive content. Updated with a lower learning rate than `labelEmbed`, providing a slower-moving representation of narrative preferences.
+  </Card>
+</CardGroup>
+
+All three vectors are **initialised to all zeros** when the user account is created. A zero profile produces valid (if random) kNN results until onboarding populates it.
+
+---
+
+## Onboarding
+
+During onboarding, two mechanisms populate the profile before the user starts swiping.
+
+<Steps>
+  <Step title="Category preferences — POST /api/user/preferences/">
+    The client sends a 9-element `preferences` list (the MHE vector) and an optional `labels` list of human-readable attraction type strings. The server stores the MHE directly and uses the `all-MiniLM-L12-v2` sentence-transformer model to embed the label strings; the mean embedding is written to both `labelEmbed` and `summaryEmbed`:
+
+    ```python
+    embedModel = SentenceTransformer("all-MiniLM-L12-v2")
+
+    def embedLabels(labels):
+        embeddings = embedModel.encode(labels)
+        return np.mean(embeddings, axis=0)
+    ```
+  </Step>
+  <Step title="Visited attraction import — POST /api/recommendations/like/bulk/">
+    The user can import a list of attractions they have already visited. The bulk-like view averages the `labelMHE`, `labelEmbed`, and `summaryEmbed` fields of all provided attractions. If the profile embeddings are still zero (first import), the averaged embeddings are assigned directly; otherwise they are blended with an alpha of 0.6 towards the new average:
+
+    ```python
+    if emptyEmbedding:
+        profile.labelEmbed   = avgLabelEmbed
+        profile.summaryEmbed = avgSummaryEmbed
+    else:
+        alphaEmbedding = 0.6
+        profile.labelEmbed   = (alphaEmbedding * avgLabelEmbed) + (1 - alphaEmbedding) * profile.labelEmbed
+        profile.summaryEmbed = (alphaEmbedding * avgSummaryEmbed) + (1 - alphaEmbedding) * profile.summaryEmbed
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Like Update
+
+When you swipe right on an attraction (`POST /api/recommendations/like/<id>`), the `LikeAttractionView._update_profile()` method shifts your profile towards that attraction using fixed learning rates:
+
+| Component      | Update rule                                          | Learning rate |
+|----------------|------------------------------------------------------|---------------|
+| `labelMHE`     | Additive accumulation                                | `α = 0.2`     |
+| `labelEmbed`   | Exponential moving average                           | `α = 0.15`    |
+| `summaryEmbed` | Exponential moving average                           | `α = 0.1`     |
+
+```python
+MHE_ALPHA          = 0.2
+LABEL_EMBED_ALPHA  = 0.15
+SUMMARY_EMBED_ALPHA = 0.1
+
+def _update_profile(self, profile, item):
+    profile.labelMHE   += (item.labelMHE * MHE_ALPHA)
+    profile.labelEmbed  = ((1 - LABEL_EMBED_ALPHA) * profile.labelEmbed) \
+                          + LABEL_EMBED_ALPHA * item.labelEmbed
+    profile.summaryEmbed = ((1 - SUMMARY_EMBED_ALPHA) * profile.summaryEmbed) \
+                           + SUMMARY_EMBED_ALPHA * item.summaryEmbed
+```
+
+The exponential moving average form `(1 − α) · old + α · new` ensures that `labelEmbed` and `summaryEmbed` remain bounded and that recent preferences carry more weight than distant history. `labelMHE` is purely additive, allowing category counts to grow indefinitely (they are L2-normalised at query time).
+
+---
+
+## Dislike Update
+
+Swiping left (`POST /api/recommendations/dislike/<id>`) uses a different strategy: rather than simply subtracting the attraction's vector from the profile, the update uses **vector rejection** for the embedding components to remove specifically the component of the profile that points *towards* the disliked item, minimising collateral change to unrelated directions.
+
+```python
+MHE_ALPHA      = 0.1
+EMBED_REJECTION = 0.3
+
+def vectorProjection(a, b):
+    return np.multiply((np.dot(a, b) / np.dot(b, b)), b)
+
+# MHE: subtract with ReLU floor to prevent negative category weights
+profile.labelMHE = np.maximum(
+    0,
+    profile.labelMHE - (item.labelMHE * MHE_ALPHA)
+)
+
+# Embeddings: subtract the projection of the profile onto the disliked item
+profile.labelEmbed   -= EMBED_REJECTION * vectorProjection(profile.labelEmbed,   item.labelEmbed)
+profile.summaryEmbed -= EMBED_REJECTION * vectorProjection(profile.summaryEmbed, item.summaryEmbed)
+```
+
+<Accordion title="Why vector rejection rather than direct subtraction?">
+  Direct subtraction `profile -= α · item` would shift the entire profile in a direction that is determined by the magnitude and orientation of the disliked item's vector. Vector rejection is more surgical: it computes the scalar projection of the profile onto the disliked direction and removes only that component, leaving the profile's orientation in all other semantic directions unchanged. The effect is that the profile moves *away* from the disliked content type without inadvertently reducing affinity for unrelated content.
+</Accordion>
+
+The ReLU clamp `np.maximum(0, ...)` on `labelMHE` prevents any category dimension from going negative, maintaining the interpretation that each dimension is a non-negative evidence count.
+
+---
+
+## Profile Delta
+
+Every `UserInteraction` record stores a `profile_delta` float that quantifies how much a single swipe changed the profile:
+
+```python
+old_vector = normalize(profile.labelMHE, profile.labelEmbed, profile.summaryEmbed)
+# ... apply like or dislike update ...
+new_vector = normalize(profile.labelMHE, profile.labelEmbed, profile.summaryEmbed)
+delta = 1 - float(cosine_similarity(
+    old_vector.reshape(1, -1),
+    new_vector.reshape(1, -1)
+)[0][0])
+```
+
+`profile_delta` is the cosine **distance** (not similarity) between the pre- and post-update profile vectors. A value close to `0` means the swipe barely shifted the profile (e.g. confirming an already-strong existing preference); a larger value indicates a meaningful new preference signal. This field serves as a per-interaction learning signal and can be used for analytics or adaptive learning-rate tuning in future iterations.
+
+---
+
+## Reset
+
+Sending a `POST` request to `/api/user/reset/` zeros out all three vector fields, returning the profile to its initial state as if the user had just registered:
+
+```python
+class ResetUserProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        UserProfile.objects.update_or_create(
+            user=request.user,
+            defaults={
+                'labelMHE':     [0.0] * 9,
+                'labelEmbed':   [0.0] * 384,
+                'summaryEmbed': [0.0] * 384,
+            }
+        )
+        return Response({"message": "user profile is reset."}, status=status.HTTP_200_OK)
+```
+
+<Warning>
+  Resetting the profile does **not** delete existing `UserInteraction` records. Previously swiped attractions will still be excluded from the candidate pool. To start completely fresh you would also need to clear interaction history.
+</Warning>
+
+<Tip>
+  A richer initial preference setup — selecting more category checkboxes and providing more descriptive type labels during onboarding — gives the embedding model more signal to work with and leads to noticeably better recommendations from the very first swipe.
+</Tip>

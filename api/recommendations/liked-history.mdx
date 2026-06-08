@@ -1,0 +1,136 @@
+---
+title: "GET /api/recommendations/history/liked — List Liked Attractions"
+sidebarTitle: "Liked History"
+description: "Retrieve all attractions the authenticated user has liked. Returns full attraction objects including location, images, and category labels."
+---
+
+The Liked History endpoint returns the complete set of attractions that the authenticated user has positively interacted with — every attraction they have ever swiped right on or imported via bulk like. The response uses the full `AttractionSerializer` format, providing the same rich object shape as the List Recommendations endpoint, so the client can display liked attractions with images, descriptions, location details, and category labels without any secondary requests. This endpoint powers the **Liked Attractions** screen in the mobile app, where users can review their history and revisit places they have previously saved. Because a user's liked set can grow unbounded over time, consumers should be prepared to handle responses with large numbers of items.
+
+## Endpoint
+
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **Path** | `/api/recommendations/history/liked` |
+| **Auth** | Bearer token required |
+
+```
+GET http://localhost:8000/api/recommendations/history/liked
+Authorization: Bearer <access_token>
+```
+
+## Query Parameters
+
+This endpoint does not accept any query parameters.
+
+<Note>
+  Results are **not paginated**. All liked attractions are returned in a single response. If a user has liked a large number of attractions, the response payload will be proportionally large. Consider this when designing loading states in client applications.
+</Note>
+
+## Response
+
+Returns an array of **all** liked attraction objects for the authenticated user, each serialised with the full `AttractionSerializer` field set.
+
+### 200 OK
+
+```json
+[
+  {
+    "id": "tower-of-london",
+    "name": "Tower of London",
+    "parentTypeLabel": "Heritage",
+    "typeLabel": "Castle",
+    "latitude": 51.5081,
+    "longtitude": -0.0759,
+    "wikipedia": "https://en.wikipedia.org/wiki/Tower_of_London",
+    "summary": "A historic castle on the north bank of the River Thames in central London...",
+    "image_path": [
+      "https://example.com/images/tower-of-london-1.jpg"
+    ],
+    "county": "Greater London",
+    "region": "London",
+    "country": "England"
+  },
+  {
+    "id": "edinburgh-castle",
+    "name": "Edinburgh Castle",
+    "parentTypeLabel": "Heritage",
+    "typeLabel": "Castle",
+    "latitude": 55.9486,
+    "longtitude": -3.1999,
+    "wikipedia": "https://en.wikipedia.org/wiki/Edinburgh_Castle",
+    "summary": "A historic fortress which dominates the skyline of Edinburgh from its position on Castle Rock...",
+    "image_path": [
+      "https://example.com/images/edinburgh-castle-1.jpg"
+    ],
+    "county": "City of Edinburgh",
+    "region": "Lothian",
+    "country": "Scotland"
+  }
+]
+```
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the attraction.
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Display name of the attraction.
+</ResponseField>
+
+<ResponseField name="parentTypeLabel" type="string">
+  Broad category label for the attraction, e.g. `Heritage`, `Nature`, `Entertainment`.
+</ResponseField>
+
+<ResponseField name="typeLabel" type="string">
+  Specific type label within the parent category, e.g. `Castle`, `National Park`, `Museum`.
+</ResponseField>
+
+<ResponseField name="latitude" type="number">
+  Geographic latitude coordinate (WGS 84).
+</ResponseField>
+
+<ResponseField name="longtitude" type="number">
+  Geographic longitude coordinate (WGS 84). Note: field name is `longtitude` (matches the database column).
+</ResponseField>
+
+<ResponseField name="wikipedia" type="string">
+  URL to the attraction's Wikipedia article. May be `null` if unavailable.
+</ResponseField>
+
+<ResponseField name="summary" type="string">
+  A textual description of the attraction, typically derived from its Wikipedia summary.
+</ResponseField>
+
+<ResponseField name="image_path" type="array">
+  List of image URL strings for the attraction. May be an empty array if no images are stored.
+
+  <Expandable title="image_path items">
+    <ResponseField name="image_path[]" type="string">
+      A URL pointing to an image asset for this attraction.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="county" type="string">
+  The UK county in which the attraction is located.
+</ResponseField>
+
+<ResponseField name="region" type="string">
+  The UK region in which the attraction is located.
+</ResponseField>
+
+<ResponseField name="country" type="string">
+  The UK country in which the attraction is located, e.g. `England`, `Scotland`, `Wales`, `Northern Ireland`.
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Fetch All Liked Attractions
+curl -X GET "http://localhost:8000/api/recommendations/history/liked" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+</CodeGroup>

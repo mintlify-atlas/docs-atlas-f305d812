@@ -1,0 +1,181 @@
+---
+title: "POST /api/user/preferences/ — Set User Preferences"
+sidebarTitle: "Set Preferences"
+description: "Set a user's attraction category preferences and interest labels to initialise the recommendation profile. Requires authentication."
+---
+
+This endpoint populates the authenticated user's recommendation profile with their attraction type preferences and a set of free-text interest labels. It accepts two pieces of data: a 9-element binary array (`preferences`) that encodes which broad attraction categories the user is interested in, and a list of human-readable label strings (`labels`) that describe their interests in natural language. Internally, the labels are encoded into a dense 384-dimensional vector using the `all-MiniLM-L12-v2` sentence-transformer model and stored as `labelEmbed` and `summaryEmbed` on the user's `UserProfile`. The `preferences` array is stored directly as `labelMHE`. Until this endpoint is called, all three vectors remain at zero (as set during [registration](/api/auth/register)), and the recommendation engine will return generic results. Bearer token authentication is required.
+
+## Endpoint
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **Path** | `/api/user/preferences/` |
+| **Auth required** | Yes — `Authorization: Bearer <access_token>` |
+| **Content-Type** | `application/json` |
+
+## Request Body
+
+<ParamField body="preferences" type="integer[]" required>
+  A fixed-length array of exactly **9 integers**. Each element must be either `0` (not interested) or `1` (interested), corresponding to one of the 9 UK attraction category groups. The array is stored directly as the `labelMHE` field on the user's profile and is used as a multi-hot encoding of category interest.
+
+  <Expandable title="Preference array positions">
+    Each index in the array maps to one UK attraction type group. Pass `1` to indicate interest and `0` to opt out:
+
+    | Index | Category group |
+    |---|---|
+    | 0 | Historic sites & castles |
+    | 1 | Museums & galleries |
+    | 2 | National parks & countryside |
+    | 3 | Coastal walks & beaches |
+    | 4 | Gardens & nature reserves |
+    | 5 | Cities & architecture |
+    | 6 | Food & drink experiences |
+    | 7 | Adventure & outdoor activities |
+    | 8 | Family attractions & theme parks |
+  </Expandable>
+</ParamField>
+
+<ParamField body="labels" type="string[]" required>
+  A non-empty array of human-readable strings describing the user's interests. These strings are joined and encoded by the `all-MiniLM-L12-v2` sentence-transformer into a 384-dimensional vector. The resulting embedding is stored as both `labelEmbed` and `summaryEmbed` on the user's `UserProfile` and is used for semantic similarity matching during recommendation retrieval. More descriptive, specific labels yield more precise semantic embeddings.
+
+  Example values: `"historic castle"`, `"coastal walk"`, `"national park"`, `"contemporary art museum"`.
+</ParamField>
+
+## Responses
+
+### 200 OK
+
+Returned when both fields pass validation and the `UserProfile` is updated successfully. The response body is empty.
+
+```http 200 OK
+HTTP/1.1 200 OK
+Content-Length: 0
+```
+
+### 400 Bad Request
+
+Three distinct validation errors can be returned:
+
+<ResponseField name="error" type="string">
+  A message describing the validation failure. One of the three values below.
+</ResponseField>
+
+<Expandable title="400 error variants">
+
+| Scenario | Response body |
+|---|---|
+| `preferences` or `labels` key is missing from the request | `{"error": "Missing preferences/labels in request body"}` |
+| `preferences` is not a list of exactly 9 elements | `{"error": "preferences need to be a list with the length of 9"}` |
+| `labels` is not a list | `{"error": "labels need to be a list"}` |
+
+```json Missing fields
+{
+  "error": "Missing preferences/labels in request body"
+}
+```
+
+```json Wrong preferences length
+{
+  "error": "preferences need to be a list with the length of 9"
+}
+```
+
+```json Labels not a list
+{
+  "error": "labels need to be a list"
+}
+```
+
+</Expandable>
+
+### 401 Unauthorized
+
+Returned when the `Authorization` header is absent, the access token is missing, or the token has expired. Obtain a fresh token via [Refresh Token](/api/auth/refresh) or [Login](/api/auth/login).
+
+```json 401 Unauthorized
+{
+  "detail": "Authentication credentials were not provided."
+}
+```
+
+<Tip>
+  **Call this endpoint during onboarding** — before the user makes their first recommendation fetch. The recommendation engine computes similarity between the user's `labelEmbed` / `summaryEmbed` vectors and attraction description embeddings; zero vectors produce meaningless similarity scores. More descriptive labels (e.g. `"ruined medieval fortification"` rather than just `"castle"`) produce richer semantic embeddings and noticeably improve recommendation quality.
+</Tip>
+
+## How the embedding works
+
+When a valid request is received, the backend performs the following steps:
+
+1. Validates `preferences` (list, length 9) and `labels` (list).
+2. Loads the `all-MiniLM-L12-v2` sentence-transformer model.
+3. Encodes the `labels` array into a single 384-dimensional floating-point vector.
+4. Persists the update to the authenticated user's `UserProfile`:
+
+| Field | Value stored |
+|---|---|
+| `labelMHE` | The 9-element `preferences` array as provided |
+| `labelEmbed` | The 384-dim sentence-transformer embedding of `labels` |
+| `summaryEmbed` | The same 384-dim embedding (used in a separate similarity pass) |
+
+## Example request
+
+```json
+{
+  "preferences": [1, 0, 1, 1, 0, 0, 1, 0, 1],
+  "labels": ["historic castle", "museum", "national park", "coastal walk"]
+}
+```
+
+In this example the user has toggled on positions 0 (historic sites), 2 (national parks), 3 (coastal walks), 6 (food & drink), and 8 (family attractions). The four label strings will be encoded together into a single semantic vector that captures the combined meaning of those interests.
+
+## Full examples
+
+<CodeGroup>
+
+```bash cURL
+curl --request POST \
+  --url http://localhost:8000/api/user/preferences/ \
+  --header 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "preferences": [1, 0, 1, 1, 0, 0, 1, 0, 1],
+    "labels": ["historic castle", "museum", "national park", "coastal walk"]
+  }'
+```
+
+```typescript TypeScript (axios)
+import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
+
+const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? 'http://localhost:8000/api';
+
+interface SetPreferencesPayload {
+  preferences: (0 | 1)[];  // exactly 9 elements
+  labels: string[];
+}
+
+async function setPreferences(payload: SetPreferencesPayload): Promise<void> {
+  const accessToken = await SecureStore.getItemAsync('access_token');
+
+  await axios.post(
+    `${BASE_URL}/user/preferences/`,
+    payload,
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+      },
+    }
+  );
+}
+
+// Usage during onboarding
+await setPreferences({
+  preferences: [1, 0, 1, 1, 0, 0, 1, 0, 1],
+  labels: ['historic castle', 'museum', 'national park', 'coastal walk'],
+});
+```
+
+</CodeGroup>

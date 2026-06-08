@@ -1,20 +1,62 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "UK Travel Recommendation"
+sidebarTitle: "Home"
+description: "Discover personalised UK attractions with a swipe-based recommendation engine powered by vector embeddings and real-time preference learning."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+UK Travel Recommendation is a full-stack mobile application that helps you discover the best attractions across England, Scotland, Wales, Northern Ireland, and beyond. The system continuously learns your tastes — every swipe shapes your preference profile, and every recommendation is tailored specifically to you.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get the backend and frontend running locally in minutes
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand how the recommendation engine, API, and mobile app fit together
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth/register">
+    Explore every endpoint — auth, preferences, recommendations, and interactions
+  </Card>
+  <Card title="Core Concepts" icon="brain" href="/concepts/recommendation-engine">
+    Learn how vector embeddings and MMR re-ranking power personalised discovery
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## How It Works
+
+<Steps>
+  <Step title="Create an account">
+    Register with a username and password. A blank preference profile is initialised automatically.
+  </Step>
+  <Step title="Set your preferences">
+    Choose attraction categories you enjoy and (optionally) import places you've already visited. The system builds an initial taste vector from your selections.
+  </Step>
+  <Step title="Discover & swipe">
+    The Discovery screen serves a ranked deck of UK attractions. Swipe right to like, left to pass. Each interaction updates your profile vector in real time.
+  </Step>
+  <Step title="Filter by area">
+    Narrow recommendations to a specific country, region, or county at any time using the geo-area filter.
+  </Step>
+</Steps>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Vector-Based Recommendations" icon="vector-square">
+    Attractions and user profiles are encoded as 777-dimensional vectors. Cosine similarity finds the best matches from thousands of UK attractions.
+  </Card>
+  <Card title="MMR Re-Ranking" icon="shuffle">
+    Maximal Marginal Relevance balances personal relevance with diversity so you never see a monotonous feed.
+  </Card>
+  <Card title="Real-Time Profile Updates" icon="arrows-rotate">
+    Liking or disliking an attraction updates your profile vector immediately using configurable learning rates.
+  </Card>
+  <Card title="Geo-Area Filtering" icon="map-pin">
+    Filter recommendations by UK country, region, or county to plan trips to a specific destination.
+  </Card>
+  <Card title="JWT Authentication" icon="lock">
+    Secure access with short-lived access tokens (15 min) and long-lived refresh tokens (30 days), handled transparently in the mobile app.
+  </Card>
+  <Card title="Docker Compose Setup" icon="docker">
+    Spin up the Django backend and pgvector PostgreSQL database with a single command.
+  </Card>
+</CardGroup>

@@ -1,0 +1,118 @@
+---
+title: "POST /api/user/register/ — Register a New User"
+sidebarTitle: "Register"
+description: "Create a new user account and initialise an empty preference profile. Accepts username and password, returns a success message on 201 Created."
+---
+
+The registration endpoint creates a new Django `User` record and simultaneously provisions a companion `UserProfile` for that user. The `UserProfile` is zero-initialised on creation: the 9-dimensional `labelMHE` preference vector, the 384-dimensional `labelEmbed` semantic vector, and the 384-dimensional `summaryEmbed` vector are all set to floating-point zero. This means the account is immediately ready to accept a subsequent call to [Set Preferences](/api/user/preferences) during onboarding, without requiring any additional setup step. No authentication is required to call this endpoint — it is publicly accessible via `AllowAny` permission.
+
+## Endpoint
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **Path** | `/api/user/register/` |
+| **Auth required** | No |
+| **Content-Type** | `application/json` |
+
+## Request Body
+
+<ParamField body="username" type="string" required>
+  The desired username for the new account. Must be unique across all registered users. If the username is already taken, the server responds with `400 Bad Request`.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The account password. Stored as a hashed value — never returned in any response. Django's default password validators apply (minimum length, common-password check, etc.).
+</ParamField>
+
+## Responses
+
+### 201 Created
+
+Returned when the user and their associated `UserProfile` are created successfully.
+
+<ResponseField name="message" type="string">
+  A human-readable confirmation string. Value is always `"User registered successfully"`.
+</ResponseField>
+
+```json 201 Created
+{
+  "message": "User registered successfully"
+}
+```
+
+### 400 Bad Request
+
+Returned when the username is already taken or the request body fails serializer validation.
+
+<ResponseField name="username" type="string">
+  An error message describing the conflict. Value is always `"Username already exists"` when the username is not unique.
+</ResponseField>
+
+```json 400 Bad Request
+{
+  "username": "Username already exists"
+}
+```
+
+<Note>
+  After a successful registration the user's preference profile is entirely zeroed out. Recommendations will not be meaningful until [Set Preferences](/api/user/preferences) is called during onboarding to populate the `labelMHE`, `labelEmbed`, and `summaryEmbed` vectors.
+</Note>
+
+## Examples
+
+<CodeGroup>
+
+```bash cURL
+curl --request POST \
+  --url http://localhost:8000/api/user/register/ \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "username": "jane_doe",
+    "password": "secureP@ssw0rd"
+  }'
+```
+
+```typescript TypeScript (axios)
+import axios from 'axios';
+
+const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? 'http://localhost:8000/api';
+
+interface RegisterResponse {
+  message: string;
+}
+
+async function registerUser(username: string, password: string): Promise<RegisterResponse> {
+  const response = await axios.post<RegisterResponse>(
+    `${BASE_URL}/user/register/`,
+    { username, password },
+    { headers: { 'Content-Type': 'application/json' } }
+  );
+  return response.data;
+}
+
+// Usage
+try {
+  const result = await registerUser('jane_doe', 'secureP@ssw0rd');
+  console.log(result.message); // "User registered successfully"
+} catch (error) {
+  if (axios.isAxiosError(error) && error.response?.status === 400) {
+    console.error('Registration failed:', error.response.data);
+    // { username: "Username already exists" }
+  }
+}
+```
+
+</CodeGroup>
+
+## What gets created
+
+When this endpoint returns `201`, two database records exist for the new user:
+
+| Record | Field | Initial value |
+|---|---|---|
+| `User` | `username` | Value from request body |
+| `User` | `password` | Hashed value of the supplied password |
+| `UserProfile` | `labelMHE` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` (9 zeros) |
+| `UserProfile` | `labelEmbed` | 384-dimensional zero vector |
+| `UserProfile` | `summaryEmbed` | 384-dimensional zero vector |

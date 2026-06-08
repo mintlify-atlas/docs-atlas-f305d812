@@ -1,0 +1,130 @@
+---
+title: "POST /api/user/token/ — Obtain JWT Access Token"
+sidebarTitle: "Login"
+description: "Exchange a username and password for a JWT access token (15 min) and refresh token (30 days). Use the access token as a Bearer token on all protected endpoints."
+---
+
+The login endpoint is powered by `djangorestframework-simplejwt`'s built-in `TokenObtainPairView`. Providing a valid username and password returns two signed JSON Web Tokens: a short-lived **access token** that authorises individual API requests, and a long-lived **refresh token** that lets the client silently obtain new access tokens without asking the user to re-enter their credentials. The access token expires after **15 minutes** and the refresh token after **30 days**. All protected endpoints in this API expect the access token to be passed in the `Authorization` header as a Bearer token. No prior authentication is needed to call this endpoint itself.
+
+## Endpoint
+
+| | |
+|---|---|
+| **Method** | `POST` |
+| **Path** | `/api/user/token/` |
+| **Auth required** | No |
+| **Content-Type** | `application/json` |
+
+## Token lifetimes
+
+| Token | Lifetime | Purpose |
+|---|---|---|
+| `access` | **15 minutes** | Authorise individual API requests via `Authorization: Bearer <token>` |
+| `refresh` | **30 days** | Obtain a new access token via [Refresh Token](/api/auth/refresh) without re-login |
+
+## Request Body
+
+<ParamField body="username" type="string" required>
+  The username supplied during registration.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The account password. The value is compared against the stored hash — it is never echoed back in any response.
+</ParamField>
+
+## Responses
+
+### 200 OK
+
+Returned when credentials are valid. The response contains both tokens.
+
+<ResponseField name="access" type="string">
+  A signed JWT access token. Valid for **15 minutes** from the time of issue. Include this value in the `Authorization: Bearer <access>` header on every protected request.
+</ResponseField>
+
+<ResponseField name="refresh" type="string">
+  A signed JWT refresh token. Valid for **30 days** from the time of issue. Store this securely and use it to obtain a new access token when the current one expires — see [Refresh Token](/api/auth/refresh).
+</ResponseField>
+
+```json 200 OK
+{
+  "access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzA5MDAwMDAwLCJpYXQiOjE3MDkwMDAwMDAsImp0aSI6ImFiY2QxMjM0IiwidXNlcl9pZCI6MX0.signature",
+  "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoicmVmcmVzaCIsImV4cCI6MTcxMTU5MjAwMCwiaWF0IjoxNzA5MDAwMDAwLCJqdGkiOiJ4eXo5ODc2IiwidXNlcl9pZCI6MX0.signature"
+}
+```
+
+### 401 Unauthorized
+
+Returned when the username does not exist or the password is incorrect. `simplejwt` does not distinguish between the two cases to prevent username enumeration.
+
+```json 401 Unauthorized
+{
+  "detail": "No active account found with the given credentials"
+}
+```
+
+<Note>
+  **Storing tokens securely in React Native** — never persist JWTs in `AsyncStorage` (plain-text). Use `expo-secure-store` (`SecureStore.setItemAsync`) to store both the access token and the refresh token in the device's encrypted keychain. Retrieve them with `SecureStore.getItemAsync` before making API calls.
+</Note>
+
+## Examples
+
+<CodeGroup>
+
+```bash cURL
+curl --request POST \
+  --url http://localhost:8000/api/user/token/ \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "username": "jane_doe",
+    "password": "secureP@ssw0rd"
+  }'
+```
+
+```typescript TypeScript (axios)
+import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
+
+const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? 'http://localhost:8000/api';
+
+interface TokenResponse {
+  access: string;
+  refresh: string;
+}
+
+async function login(username: string, password: string): Promise<TokenResponse> {
+  const response = await axios.post<TokenResponse>(
+    `${BASE_URL}/user/token/`,
+    { username, password },
+    { headers: { 'Content-Type': 'application/json' } }
+  );
+
+  // Persist tokens securely on the device
+  await SecureStore.setItemAsync('access_token', response.data.access);
+  await SecureStore.setItemAsync('refresh_token', response.data.refresh);
+
+  return response.data;
+}
+
+// Usage
+try {
+  const tokens = await login('jane_doe', 'secureP@ssw0rd');
+  console.log('Logged in. Access token:', tokens.access);
+} catch (error) {
+  if (axios.isAxiosError(error) && error.response?.status === 401) {
+    console.error('Invalid credentials');
+  }
+}
+```
+
+</CodeGroup>
+
+## Using the access token
+
+Once you have the access token, attach it to every subsequent protected request in the `Authorization` header:
+
+```http
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+When the access token expires after 15 minutes, use the [Refresh Token](/api/auth/refresh) endpoint to obtain a new one without requiring the user to log in again.

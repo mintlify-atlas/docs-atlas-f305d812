@@ -1,0 +1,168 @@
+---
+title: "How the Recommendation Engine Works"
+sidebarTitle: "Recommendation Engine"
+description: "Learn how UK Travel Recommendation uses cosine vector similarity, kNN search, and MMR re-ranking to surface personalised and diverse attraction recommendations."
+---
+
+The recommendation engine transforms your accumulated preferences into a ranked list of UK attractions through a three-stage pipeline: your live user profile vector is normalised and used to query a pgvector-backed PostgreSQL database via approximate nearest-neighbour cosine search, the resulting candidate pool is then passed through a Maximal Marginal Relevance (MMR) re-ranker that balances personal relevance against variety, and only then is the final list of ten attractions returned. Every swipe you make updates your profile in real time, so each new recommendations fetch reflects your latest expressed taste.
+
+## Overview
+
+The pipeline can be summarised as follows:
+
+<Steps>
+  <Step title="Build the user vector">
+    The three components of your `UserProfile` — `labelMHE`, `labelEmbed`, and `summaryEmbed` — are L2-normalised and concatenated into a single 777-dimensional `finalVector` that represents your current preferences.
+  </Step>
+  <Step title="kNN cosine search">
+    pgvector computes `CosineDistance` between your vector and every eligible attraction's `finalVector`. The top-k results (k varies by geo scope) form the candidate pool. Attractions you have already interacted with are excluded.
+  </Step>
+  <Step title="MMR re-ranking">
+    The candidate pool is re-ranked by Maximal Marginal Relevance to balance similarity to your profile against redundancy within the returned list, producing a diverse set of ten recommendations.
+  </Step>
+  <Step title="Serialise and respond">
+    The ten selected `Attraction` objects are serialised and returned to the client as a JSON array.
+  </Step>
+</Steps>
+
+---
+
+## Vector Representation
+
+Each attraction and each user profile is ultimately represented as a single **777-dimensional** vector called `finalVector`. It is assembled from three semantically distinct sub-vectors, each weighted to reflect its relative importance:
+
+<CardGroup cols={3}>
+  <Card title="labelMHE" icon="tags">
+    **9 dimensions · weight 1.5**
+
+    A multi-hot encoding over the nine top-level attraction categories (e.g. Historic, Natural, Cultural). The higher weight gives broad category preference the strongest pull.
+  </Card>
+  <Card title="labelEmbed" icon="font">
+    **384 dimensions · weight 1.0**
+
+    A sentence-transformer embedding of the attraction's `typeLabel` string, capturing fine-grained semantic type similarity (e.g. "Castle" vs "Manor House").
+  </Card>
+  <Card title="summaryEmbed" icon="align-left">
+    **384 dimensions · weight 0.5**
+
+    A sentence-transformer embedding of the attraction's `summary` text, capturing thematic and descriptive similarity at the content level.
+  </Card>
+</CardGroup>
+
+The `normalize()` utility in `recommendations/utils.py` produces this composite vector. Each sub-vector is independently L2-normalised before being scaled by its weight, ensuring that a component with large raw magnitudes cannot dominate simply due to scale:
+
+```python
+WEIGHT_MHE = 1.5
+WEIGHT_TYPE = 1.0
+WEIGHT_SUMMARY = 0.5
+
+def safeL2Normalize(vec):
+    arr = np.array(vec, dtype=float)
+    l2 = np.linalg.norm(arr)
+    if l2 > 0: arr /= l2
+    return arr
+
+def normalize(labelMHE, labelEmbed, summaryEmbed):
+    return np.concatenate([
+        safeL2Normalize(labelMHE) * WEIGHT_MHE,
+        safeL2Normalize(labelEmbed) * WEIGHT_TYPE,
+        safeL2Normalize(summaryEmbed) * WEIGHT_SUMMARY,
+    ])
+```
+
+The same `normalize()` function is applied identically to both attraction vectors (stored in `Attraction.finalVector`) and user profile vectors at query time, so cosine distance is computed in a shared, consistently-scaled space.
+
+---
+
+## kNN Search
+
+Once the user vector is built, `RecommendationsListView` queries the database using pgvector's `CosineDistance` operator, ordered by descending similarity (i.e. `1 - CosineDistance`). The query is constructed dynamically:
+
+```python
+queryset.annotate(
+    similarity=1 - CosineDistance(expression='finalVector', vector=user_vector)
+).order_by('-similarity')[:k]
+```
+
+The value of `k` — the number of candidates retrieved before re-ranking — is adjusted based on the active geo scope. A geo-filtered query operates over a smaller, pre-filtered set of attractions, so a proportionally lower `k` still captures a representative candidate pool while keeping query latency low:
+
+| Geo scope     | Query parameter        | k value |
+|---------------|------------------------|---------|
+| No filter     | *(none)*               | 100     |
+| Country       | `?country=<name>`      | 75      |
+| Region        | `?region=<name>`       | 50      |
+| County        | `?county=<name>`       | 25      |
+
+DB indexes on `county`, `region`, and `country` columns ensure the `WHERE` clause applied by each geo filter is evaluated efficiently before the vector scan.
+
+<Note>
+  Attractions that the authenticated user has already interacted with (liked **or** disliked) are excluded from the candidate queryset via `.exclude(interactions__user=user)` before the kNN search is performed.
+</Note>
+
+---
+
+## MMR Re-Ranking
+
+Returning the raw top-k by cosine similarity would tend to produce a list where several attractions are nearly identical — all Norman castles in the same region, for example. Maximal Marginal Relevance (MMR) addresses this by greedily selecting items that are simultaneously relevant to the user *and* dissimilar to what has already been selected.
+
+The MMR score for a candidate item `i` at each selection step is:
+
+```
+MMR(i) = λ · similarity(i, user) − (1 − λ) · max_j similarity(i, selected_j)
+```
+
+With `lambda_mult = 0.5` the formula weights relevance and diversity equally. The implementation uses cosine similarity over `finalVector` for the redundancy term, matching the same vector space used for retrieval:
+
+```python
+def mmr_rerank(candidates, n=10, lambda_mult=0.5):
+    selected = []
+    remains = candidates[:]
+    for _ in range(n):
+        best_mmr = -np.inf
+        best_idx = -1
+        for i, item in enumerate(remains):
+            max_redundancy = 0.0
+            if selected:
+                curVectors = np.array(item.finalVector).reshape(1, -1)
+                selectedVectors = np.vstack([sel.finalVector for sel in selected])
+                sims = cosine_similarity(curVectors, selectedVectors)
+                max_redundancy = np.max(sims)
+            mmr_score = lambda_mult * item.similarity - ((1 - lambda_mult) * max_redundancy)
+            if mmr_score > best_mmr:
+                best_mmr = mmr_score
+                best_idx = i
+        if best_idx != -1:
+            selected.append(remains.pop(best_idx))
+    return selected
+```
+
+<Tip>
+  `lambda_mult` can be tuned: values closer to `1.0` prioritise pure relevance (less diverse), while values closer to `0.0` prioritise novelty (potentially less personally relevant).
+</Tip>
+
+The result is a list of exactly ten attractions that together cover a broad range of types and themes while still being anchored to what you have demonstrated you enjoy.
+
+---
+
+## Diversity Tracking
+
+To monitor whether the recommendation engine is producing genuinely varied results over time, the system computes an **Intra-List Diversity (ILD)** score every 10 interactions. ILD measures the average pairwise dissimilarity across the most recent batch of liked attractions:
+
+```
+ILD = Σ(1 − cos_sim(i, j)) / (n × (n − 1))
+```
+
+This score is computed in `InteractionView._log_ild()` using the `finalVector` fields of the last 10 interacted attractions and is stored in the `UserRecommendationBatch` model alongside a timestamp. A rising ILD trend indicates the engine is successfully broadening recommendations; a sustained low value could signal a filter-bubble effect.
+
+<CardGroup cols={2}>
+  <Card title="Computed every" icon="clock">
+    10 interactions (liked or disliked)
+  </Card>
+  <Card title="Stored in" icon="database">
+    `UserRecommendationBatch.ild_score`
+  </Card>
+</CardGroup>
+
+<Note>
+  Attractions already interacted with are excluded from the candidate pool at the database query level, so they can never appear in a new recommendations response regardless of how high their cosine similarity to your profile is.
+</Note>

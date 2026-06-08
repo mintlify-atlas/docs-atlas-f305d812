@@ -1,0 +1,116 @@
+---
+title: "Environment Variables for UK Travel Recommendation"
+sidebarTitle: "Environment"
+description: "Configure the Django backend and React Native frontend using environment variables. Reference for all required and optional settings with example values."
+---
+
+The UK Travel Recommendation project separates secrets and environment-specific configuration from source code by using `.env` files that are never committed to version control. The Django backend reads its variables from `backend/.env` at startup (via `python-dotenv`), while the React Native/Expo frontend reads variables prefixed with `EXPO_PUBLIC_` from `frontend/.env` or `frontend/.env.local`. This page is the authoritative reference for every variable the project recognises, along with guidance on generating safe values and understanding the JWT token lifetimes that are baked into `settings.py`.
+
+## Backend Environment File
+
+The Django backend loads its configuration from `backend/.env`. When you run the stack with Docker Compose, this file is passed to both the `backend` container (via the `env_file` directive) and variables referenced inside the `db` service definition are read from the same file through Docker Compose variable interpolation.
+
+The file is plain text — one `KEY=VALUE` pair per line, no spaces around the `=`, no quotes required (though they are accepted). Comments begin with `#`.
+
+## Required Variables
+
+The following variables **must** be present in `backend/.env` before the stack can start. The application will raise errors at startup or fail database operations if any of these are missing.
+
+<Tabs>
+  <Tab title="Variable Reference">
+
+| Variable | Description | Example |
+|---|---|---|
+| `DJANGO_SECRET` | Django's [`SECRET_KEY`](https://docs.djangoproject.com/en/stable/ref/settings/#secret-key). Used for cryptographic signing of sessions, CSRF tokens, and password reset links. Must be a long, random, unpredictable string. | *(generated — see below)* |
+| `POSTGRES_DB` | Name of the PostgreSQL database Django will connect to. Must match the database created by the `db` container. | `uktravel` |
+| `POSTGRES_USER` | PostgreSQL username. Used by both the `db` container (to create the role) and Django (to authenticate). | `postgres` |
+| `POSTGRES_PASSWORD` | Password for `POSTGRES_USER`. Choose a strong password even for local development. | `changeme` |
+
+  </Tab>
+  <Tab title="How to generate DJANGO_SECRET">
+    Never reuse a secret key between environments or copy one from a public repository. Generate a fresh one with Django's built-in utility:
+
+    ```bash
+    python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+    ```
+
+    If Python is not installed locally, you can run the command inside the backend container after it has started:
+
+    ```bash
+    docker exec backend_csproj python -c \
+      "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+    ```
+
+    Copy the output and paste it as the value of `DJANGO_SECRET` in your `.env` file.
+  </Tab>
+</Tabs>
+
+## Example .env File
+
+Copy the block below into `backend/.env` and replace the placeholder values with your own.
+
+```bash backend/.env
+# Django
+DJANGO_SECRET=replace-this-with-a-real-secret-key-generated-by-django
+
+# PostgreSQL (used by both the db container and the Django backend)
+POSTGRES_DB=uktravel
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=changeme
+```
+
+<Tip>
+  The `POSTGRES_HOST` and `POSTGRES_PORT` values are hardcoded in `settings.py` as `db` and `5432` respectively, matching the Docker Compose service name. You do not need to add them to `.env` unless you are running Django outside of Docker Compose and connecting to a different host.
+</Tip>
+
+## Frontend Environment
+
+The React Native/Expo frontend requires a single environment variable that tells it where to find the backend API. Create `frontend/.env` (or `frontend/.env.local` for local overrides that are not committed to version control):
+
+```bash frontend/.env
+EXPO_PUBLIC_BACKEND_URL=http://localhost:8000/api
+```
+
+### `EXPO_PUBLIC_BACKEND_URL`
+
+The base URL for all API requests made by the mobile app. The Expo build system injects any variable prefixed with `EXPO_PUBLIC_` into the JavaScript bundle at build time, making it accessible via `process.env.EXPO_PUBLIC_BACKEND_URL`.
+
+| Detail | Value |
+|---|---|
+| Default (local Docker) | `http://localhost:8000/api` |
+| Note | Do **not** add a trailing slash. The app appends paths like `/user/login/` directly. |
+| Android emulator | Use `http://10.0.2.2:8000/api` — Android emulators route `10.0.2.2` to the host machine's `localhost` |
+| Physical device | Use your machine's local IP, e.g. `http://192.168.1.100:8000/api` |
+
+## JWT Token Lifetimes
+
+The following JWT settings are configured directly in `backend/app/settings.py` using Django Simple JWT. They are not overridable through `.env` and are listed here for reference only.
+
+<CardGroup cols={2}>
+  <Card title="Access Token Lifetime" icon="clock">
+    **15 minutes**
+
+    Short-lived tokens sent in the `Authorization: Bearer <token>` header for every authenticated API request. The client must refresh them regularly using the refresh token.
+  </Card>
+  <Card title="Refresh Token Lifetime" icon="arrows-rotate">
+    **30 days**
+
+    Long-lived tokens used exclusively to obtain new access tokens via the `/api/token/refresh/` endpoint. Store these securely in the app's secure storage (e.g. Expo SecureStore), never in AsyncStorage.
+  </Card>
+</CardGroup>
+
+## Security Warnings
+
+<Warning>
+  **Never commit `backend/.env` to version control.** The `.gitignore` file already includes `.env` entries to prevent accidental commits. Verify this with `git status` before pushing — if `backend/.env` appears as an untracked file, your `.gitignore` is working correctly. If it appears as a staged file, remove it immediately with `git rm --cached backend/.env`.
+</Warning>
+
+<Note>
+  `ALLOWED_HOSTS = ["*"]` is set in `settings.py` for development convenience, meaning Django will accept requests addressed to any hostname. **For production**, change this to list only your actual domain(s), for example:
+
+  ```python
+  ALLOWED_HOSTS = ["api.yourdomain.com"]
+  ```
+
+  Running with `ALLOWED_HOSTS = ["*"]` in production exposes your application to HTTP Host header attacks.
+</Note>

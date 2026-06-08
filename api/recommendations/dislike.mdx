@@ -1,0 +1,100 @@
+---
+title: "POST /api/recommendations/dislike/{id} — Dislike an Attraction"
+sidebarTitle: "Dislike Attraction"
+description: "Record a dislike for an attraction and push the user's preference profile away using vector rejection. Returns 400 if the attraction was already disliked."
+---
+
+The Dislike endpoint records a negative interaction for an attraction and updates the user's preference profile to actively steer it **away** from the disliked attraction's characteristics. Unlike the Like endpoint which moves the profile toward an item, the dislike logic uses a **vector rejection** technique on the embedding components — effectively subtracting the component of the profile that points in the direction of the disliked attraction — and applies a **ReLU-floored subtraction** on the categorical MHE component so that no dimension of the profile vector is ever driven below zero. This asymmetry between like and dislike update mechanics allows the system to be more conservative in moving away from content than in moving toward it, preserving profile stability while still meaningfully deprioritising unwanted categories. As with likes, the operation is transaction-safe and idempotent-guarded.
+
+## Endpoint
+
+| Field | Value |
+|-------|-------|
+| **Method** | `POST` |
+| **Path** | `/api/recommendations/dislike/{id}` |
+| **Auth** | Bearer token required |
+
+```
+POST http://localhost:8000/api/recommendations/dislike/<attraction_id>
+Authorization: Bearer <access_token>
+```
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the attraction to dislike. This matches the `id` field returned by the [List Recommendations](/api/recommendations/list) and [Search](/api/recommendations/search) endpoints.
+
+  **Example:** `/api/recommendations/dislike/blackpool-tower`
+</ParamField>
+
+## Request Body
+
+This endpoint does not require a request body.
+
+## Profile Vector Update
+
+When a dislike is successfully recorded, the user's preference profile is updated using the following rules:
+
+| Vector Component | Update Rule | Parameter |
+|-----------------|-------------|-----------|
+| `labelMHE` | Subtractive with ReLU floor — `profile.labelMHE = max(0, profile.labelMHE − item.labelMHE × 0.1)` | α = 0.1 |
+| `labelEmbed` | Vector rejection — project out the component along the item's direction, scaled by rejection factor | REJECTION = 0.3 |
+| `summaryEmbed` | Vector rejection — same rejection technique applied to the summary embedding component | REJECTION = 0.3 |
+
+**Vector rejection** works by computing the projection of the profile embedding onto the disliked attraction's embedding unit vector, then subtracting a fraction (`REJECTION = 0.3`) of that projection from the profile. This moves the profile away from the disliked attraction's direction in embedding space without flipping the vector arbitrarily.
+
+**ReLU floor** on the MHE component ensures that categorical preference scores never go negative — a dislike can reduce interest in a category to zero but cannot invert it.
+
+The resulting profile vector is normalised after the update.
+
+## Response
+
+### 200 OK — Dislike recorded successfully
+
+```json
+{
+  "message": "Preference updated",
+  "id": "<attraction_id>"
+}
+```
+
+<ResponseField name="message" type="string">
+  Confirmation string. Always `"Preference updated"` on success.
+</ResponseField>
+
+<ResponseField name="id" type="string">
+  The `id` of the attraction that was disliked, echoed back in the response.
+</ResponseField>
+
+### 400 Bad Request — Already disliked
+
+Returned when a `UserInteraction` record already exists with `liked=False` for this user and attraction pair.
+
+```json
+{
+  "error": "Already disliked"
+}
+```
+
+<ResponseField name="error" type="string">
+  Error message. Always `"Already disliked"` when this specific condition is triggered.
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Dislike an Attraction
+curl -X POST "http://localhost:8000/api/recommendations/dislike/blackpool-tower" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```bash Already Disliked (400 response)
+# Calling the same endpoint twice returns:
+# HTTP 400
+# { "error": "Already disliked" }
+curl -X POST "http://localhost:8000/api/recommendations/dislike/blackpool-tower" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+</CodeGroup>

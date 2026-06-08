@@ -1,0 +1,178 @@
+---
+title: "System Architecture of UK Travel Recommendation"
+sidebarTitle: "Architecture"
+description: "Explore how the Django REST backend, pgvector database, recommendation engine, and React Native frontend work together to deliver personalised results."
+---
+
+UK Travel Recommendation is designed around a single architectural principle: keep the heavy lifting — vector storage, similarity search, and profile arithmetic — inside the database layer, and keep the mobile client as thin as possible. The result is a three-tier system where a React Native / Expo frontend communicates exclusively through a stateless REST API, which in turn delegates all vector operations to a PostgreSQL 15 instance running the `pgvector` extension. There are no external ML inference services at request time; embeddings are pre-computed offline and stored alongside the attraction records, so every recommendation query is resolved in a single SQL call enriched by in-process MMR re-ranking.
+
+## Component Overview
+
+<CardGroup cols={3}>
+  <Card title="Backend API" icon="server">
+    **Django 6 + Django REST Framework**
+
+    Two apps — `users` and `recommendations` — expose RESTful endpoints under `/api/user/` and `/api/recommendations/`. Business logic (profile updates, MMR re-ranking) runs in Python; authentication is handled by `djangorestframework-simplejwt`.
+  </Card>
+  <Card title="Vector Database" icon="database">
+    **PostgreSQL 15 + pgvector**
+
+    Every attraction and every user profile stores a 777-dimensional `finalVector` column. The `pgvector` extension provides an `IVFFlat` index and the `CosineDistance` operator, turning kNN queries into standard SQL that PostgreSQL can execute efficiently.
+  </Card>
+  <Card title="Mobile Frontend" icon="mobile">
+    **React Native + Expo SDK 54**
+
+    NativeWind provides Tailwind-style utility classes. TanStack Query v5 manages server state and background refetching. `axios` sends authenticated requests with JWTs stored in Expo Secure Store. The primary UI is a swipe card feed.
+  </Card>
+</CardGroup>
+
+## Data Flow
+
+The lifetime of a user session follows a clear cycle from registration through continuous profile refinement.
+
+<Steps>
+  <Step title="Registration and login">
+    The user creates an account via `POST /api/user/register/`. The backend creates a `User` record and an associated `UserProfile` with a zero-initialised `finalVector`. On login (`POST /api/user/login/`), the server returns a short-lived **access token** (15 min) and a long-lived **refresh token** (30 days). Both are persisted in Expo Secure Store on the device.
+  </Step>
+  <Step title="Initial preference setup">
+    Before the swipe feed is shown, the onboarding flow asks the user to select preferred attraction categories. These selections are encoded using the same Multi-Hot Encoding scheme used for attractions and used to seed the user's `finalVector`, giving the recommendation engine a meaningful starting point before any swipes have occurred.
+  </Step>
+  <Step title="Recommendation fetch">
+    The frontend calls `GET /api/recommendations/` (optionally with `?county=`, `?region=`, or `?country=` geo-filter parameters). Django retrieves the caller's `UserProfile.finalVector`, runs a `pgvector` cosine-distance kNN query against the attractions table, and then applies MMR re-ranking in Python before returning a ranked list of attraction objects.
+  </Step>
+  <Step title="Swipe interaction">
+    Each swipe gesture triggers a `POST /api/recommendations/swipe/` request carrying the attraction ID and the swipe direction (`like` or `dislike`). The backend fetches the swiped attraction's `finalVector` and adds it to (like) or subtracts it from (dislike) the user's profile vector, then re-normalises and persists the updated profile.
+  </Step>
+  <Step title="Profile update and next batch">
+    With the profile updated, TanStack Query invalidates the recommendations cache, and the next fetch returns a freshly computed batch that reflects the user's latest expressed preferences. This cycle repeats for every swipe, creating a continuously tightening feedback loop.
+  </Step>
+</Steps>
+
+## Vector Representation
+
+Every attraction in the database is characterised by a single **777-dimensional `finalVector`** that captures three complementary signals at different levels of abstraction. User profiles are stored in exactly the same format, which means the dot-product geometry that underlies cosine similarity works identically for attraction-to-attraction and user-to-attraction comparisons.
+
+The vector is assembled by concatenating three normalised, weighted sub-vectors:
+
+| Sub-vector | Dimensions | Source | Weight |
+|---|---|---|---|
+| `labelMHE` | 9 | Multi-Hot Encoding of attraction category labels | **1.5×** |
+| `labelEmbed` | 384 | Sentence-transformer embedding of the attraction type string | **1.0×** |
+| `summaryEmbed` | 384 | Sentence-transformer embedding of the attraction summary text | **0.5×** |
+
+The higher weight given to `labelMHE` reflects the observation that broad category (e.g. *castle*, *beach*, *museum*) is the strongest predictor of personal taste, while the semantic summary embedding captures finer-grained distinctions at a reduced influence.
+
+The assembly is performed by the `normalize()` function, called once during data ingestion and once each time a user profile is updated:
+
+```python
+WEIGHT_MHE = 1.5
+WEIGHT_TYPE = 1.0
+WEIGHT_SUMMARY = 0.5
+
+def normalize(labelMHE, labelEmbed, summaryEmbed):
+    return np.concatenate([
+        safeL2Normalize(labelMHE) * WEIGHT_MHE,
+        safeL2Normalize(labelEmbed) * WEIGHT_TYPE,
+        safeL2Normalize(summaryEmbed) * WEIGHT_SUMMARY,
+    ])
+```
+
+`safeL2Normalize` divides a vector by its L2 norm (guarding against zero-norm edge cases) before the weight is applied. The resulting 777-dim vector is **not** re-normalised after concatenation — the differential weighting is preserved in the final magnitude.
+
+## Recommendation Pipeline
+
+<Accordion title="Step 1 — kNN candidate retrieval">
+  The pipeline begins with a `pgvector` cosine-distance query. The value of *k* (the number of candidates retrieved) scales with the specificity of the geo-filter in order to keep the candidate pool large enough for MMR to operate effectively:
+
+  | Geo filter | k |
+  |---|---|
+  | No filter (all UK) | 100 |
+  | Country (England / Scotland / Wales / NI) | 75 |
+  | Region | 50 |
+  | County | 25 |
+
+  The query uses the `<=>` pgvector cosine-distance operator and orders results ascending (smaller distance = more similar), excluding attractions the user has already swiped on.
+</Accordion>
+
+<Accordion title="Step 2 — MMR re-ranking">
+  Raw kNN results often cluster around a single corner of the embedding space — for example, returning 20 variations of "Victorian seaside pier" for a user who swiped right on one pier. **Maximal Marginal Relevance (MMR)** addresses this by iteratively selecting the next recommendation to maximise a trade-off between relevance to the user profile and dissimilarity to the already-selected items.
+
+  The trade-off is controlled by `lambda_mult = 0.5`, which weights relevance and diversity equally:
+
+  ```
+  MMR score = λ · sim(attraction, user_profile)
+            − (1 − λ) · max_sim(attraction, already_selected)
+  ```
+
+  At `lambda_mult = 0.5` the algorithm is equally willing to sacrifice a small amount of relevance to gain meaningful diversity. The final ranked list (typically the top 10–20 items from the MMR pass) is what the frontend receives.
+</Accordion>
+
+<Accordion title="Step 3 — Serialisation and response">
+  The re-ranked attractions are serialised by Django REST Framework into JSON objects containing the attraction's metadata fields (name, county, region, summary, image URL, coordinates) but **not** the raw vector. The response is paginated so the frontend can request additional batches as the user works through the swipe stack.
+</Accordion>
+
+## Authentication Flow
+
+UK Travel Recommendation uses **JSON Web Tokens (JWT)** via `djangorestframework-simplejwt`. The token lifecycle is designed to balance security (short-lived access tokens) with a smooth user experience (automatic silent refresh).
+
+<Tabs>
+  <Tab title="Token issuance">
+    ```
+    POST /api/user/login/
+    → 200 OK
+    {
+      "access":  "<JWT, expires in 15 minutes>",
+      "refresh": "<JWT, expires in 30 days>"
+    }
+    ```
+
+    Both tokens are stored immediately in **Expo Secure Store**, which uses the device's hardware-backed secure enclave (Keychain on iOS, Keystore on Android) to protect them at rest.
+  </Tab>
+  <Tab title="Authenticated requests">
+    Every request to a protected endpoint includes the access token in the `Authorization` header:
+
+    ```
+    Authorization: Bearer <access_token>
+    ```
+
+    The `axios` instance in the frontend sets this header automatically via a request interceptor that reads the token from Expo Secure Store before each call.
+  </Tab>
+  <Tab title="Automatic token refresh">
+    When an API call returns `401 Unauthorized`, a response interceptor in `axios` automatically:
+
+    1. Calls `POST /api/user/token/refresh/` with the stored refresh token.
+    2. Writes the new access token back to Expo Secure Store.
+    3. Retries the original failed request with the new token.
+
+    If the refresh token has also expired (after 30 days of inactivity), the interceptor clears both tokens from Secure Store and redirects the user to the login screen.
+  </Tab>
+</Tabs>
+
+<Note>
+  Access tokens are intentionally short-lived (15 minutes) to limit the blast radius of token theft. Because the refresh flow is fully automatic, users are never prompted to log in again during an active session, even if the session spans multiple days.
+</Note>
+
+## Infrastructure
+
+The entire backend stack is defined in a single `docker-compose.yml` at the repository root:
+
+```yaml
+services:
+  db:
+    image: pgvector/pgvector:pg15-bookworm
+    ports:
+      - "5432:5432"
+    env_file:
+      - ./backend/.env
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    env_file:
+      - ./backend/.env
+```
+
+Both services share the same `./backend/.env` file for database credentials, ensuring the Django `DATABASES` setting and the PostgreSQL initialisation scripts use identical values. The `pgvector/pgvector:pg15-bookworm` image ships with the `pgvector` extension pre-compiled, so no additional installation step is needed — the extension is enabled by the Django migration that creates the vector columns.

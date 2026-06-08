@@ -1,0 +1,94 @@
+---
+title: "GET /api/recommendations/search — Search Attractions by Name"
+sidebarTitle: "Search"
+description: "Search UK attractions by name with a case-insensitive partial match. Returns up to 20 results with id and name fields for use in the import flow."
+---
+
+The Search endpoint enables fast, lightweight lookup of UK attractions by name. It performs a **case-insensitive partial-match** (`icontains`) query against the full attraction database and returns a condensed representation — just `id` and `name` — with a maximum of 20 results. This trimmed response format is intentional: the endpoint is designed to power the onboarding import flow, where the user types an attraction name to locate it quickly before passing its `id` to the [Bulk Like](/api/recommendations/bulk-like) endpoint. Because it returns only identifiers and display names rather than full attraction objects, the response is compact and fast even when many matches exist.
+
+## Endpoint
+
+| Field | Value |
+|-------|-------|
+| **Method** | `GET` |
+| **Path** | `/api/recommendations/search` |
+| **Auth** | Bearer token required |
+
+```
+GET http://localhost:8000/api/recommendations/search?q=<query>
+Authorization: Bearer <access_token>
+```
+
+## Query Parameters
+
+<ParamField query="q" type="string" required>
+  The search string to match against attraction names. Matching is case-insensitive and partial — the query `tower` will match `Tower of London`, `Blackpool Tower`, and any other attraction whose name contains the substring.
+
+  Omitting `q` or sending an empty string returns an empty array (`[]`).
+
+  **Example:** `q=Tower`
+</ParamField>
+
+## Response
+
+Returns an array of up to **20** attraction search result objects. Each object contains only `id` and `name`.
+
+### 200 OK
+
+```json
+[
+  {
+    "id": "tower-of-london",
+    "name": "Tower of London"
+  },
+  {
+    "id": "blackpool-tower",
+    "name": "Blackpool Tower"
+  },
+  {
+    "id": "tower-bridge",
+    "name": "Tower Bridge"
+  }
+]
+```
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the attraction. Pass this value in the `ids` array of the [Bulk Like](/api/recommendations/bulk-like) endpoint or as the path parameter of the [Like](/api/recommendations/like) endpoint.
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Display name of the attraction, suitable for rendering in a search results list.
+</ResponseField>
+
+### Empty Result
+
+When the `q` parameter is absent, empty, or matches no attraction names, the endpoint returns an empty JSON array:
+
+```json
+[]
+```
+
+<Warning>
+  The search result set is hard-capped at **20 items**. If your query is very broad (e.g. a single common letter), only the first 20 database matches are returned. Use a more specific query string to narrow results.
+</Warning>
+
+## Examples
+
+<CodeGroup>
+
+```bash Search by Name
+curl -X GET "http://localhost:8000/api/recommendations/search?q=Tower" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```bash Partial Match
+curl -X GET "http://localhost:8000/api/recommendations/search?q=castle" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+```bash Empty Query (returns [])
+curl -X GET "http://localhost:8000/api/recommendations/search" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+</CodeGroup>
