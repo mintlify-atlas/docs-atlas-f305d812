@@ -1,39 +1,14 @@
 ---
-title: "App Screens and Navigation for UK Travel Recommendation"
+title: "App Screens - User Interface"
 sidebarTitle: "Screens"
 description: "Tour every screen in the UK Travel Recommendation app: onboarding, discovery swipe deck, liked attractions grid, map view, and settings."
 ---
 
 The UK Travel Recommendation app is organised into four distinct screen groups that a user encounters in order: the auth screens for account creation and sign-in, a three-step onboarding flow that tailors the recommendation engine to their interests, the main discovery and liked-attractions experience, and a settings area for updating ongoing preferences. Each group maps to a specific navigator in the root `NativeStackNavigator`, ensuring clean transition animations and type-safe route parameters throughout.
 
-## Route Parameter Reference
-
-All screen names and their associated parameters are declared in a single type in `types/navigation.tsx`. This is the canonical reference for any `navigation.navigate()` call in the codebase:
-
-```typescript
-export type RootStackParamList = {
-  Landing: undefined;
-  Register: undefined;
-  Login: undefined;
-  PreferenceStack: undefined;
-  PreferenceCat: undefined;
-  PreferenceArea: undefined;
-  PreferenceImport: undefined;
-  Main: undefined;
-  Discovery: undefined;
-  Liked: undefined;
-  LikedMain: undefined;
-  LikedAreaScreen: { items: Attraction[]; areaName: string };
-  Profile: undefined;
-  Settings: undefined;
-  UpdateGeoFilter: undefined;
-  AttractionImport: undefined;
-};
-```
-
-<Note>
-  `LikedAreaScreen` is the only route that carries params. The `items` array is passed directly from the liked-attractions list to avoid a redundant network request when opening the map view.
-</Note>
+<Frame caption="Highlight UIs of the app">
+  ![Highlight Ui](/images/highlight-ui.png)
+</Frame>
 
 ## Auth Screens
 
@@ -107,15 +82,23 @@ New users are routed through a three-screen preference-gathering flow immediatel
 
 The `DiscoveryScreen` is the heart of the app — a continuously refreshing swipeable deck of personalised UK attraction cards.
 
+<div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
+  <div style={{ width: '340px', flexShrink: 0 }}>
+    <video src="/videos/swiping-animation.mp4" style={{ width: '100%' }} controls />
+  </div>
+
+  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', minWidth: 0 }}>
+    <Card title="Swipe Deck" icon="hand-pointer">
+      Custom swipe animation from scratch, tailored from [Rakha Wibowo's](https://www.youtube.com/watch?v=-JoQ5Y_unl8\&t=1176s). Each card shows the attraction image, name, category, and a short description. Swipe **right** to like, swipe **left** to dislike. The deck never empties thanks to automatic background pre-fetching.
+    </Card>
+
+    <Card title="Auto-Pagination" icon="arrows-rotate">
+      The `useRecommendations` hook monitors `currentIndex`. When five or fewer cards remain in the local cache, it automatically fetches the next page from `/recommendations` (with the current `geoFilter` appended) and appends the new items to the deck.
+    </Card>
+  </div>
+</div>
+
 <CardGroup cols={2}>
-  <Card title="Swipe Deck" icon="hand-pointer">
-    Custom swipe animation from scratch, tailored from [Rakha Wibowo's](https://www.youtube.com/watch?v=-JoQ5Y_unl8&t=1176s). Each card shows the attraction image, name, category, and a short description. Swipe **right** to like, swipe **left** to dislike. The deck never empties thanks to automatic background pre-fetching.
-  </Card>
-
-  <Card title="Auto-Pagination" icon="arrows-rotate">
-    The `useRecommendations` hook monitors `currentIndex`. When five or fewer cards remain in the local cache, it automatically fetches the next page from `/recommendations` (with the current `geoFilter` appended) and appends the new items to the deck.
-  </Card>
-
   <Card title="Swipe Actions" icon="thumbs-up">
     - **Swipe right** → `onSwipeRight(id)` → `likeMutation.mutate(id)` → calls `likeAttraction(id)` (POST `/recommendations/like/<id>`) → on success, invalidates the `likedHistory` query so the Liked tab reflects the change immediately.
     - **Swipe left** → `onSwipeLeft(id)` → calls `dislikeAttraction(id)` directly (POST `/recommendations/dislike/<id>`).
